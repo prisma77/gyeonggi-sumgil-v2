@@ -20,6 +20,7 @@ fun Properties.unnamedPublicDataKey(): String? {
     val knownKeys = setOf(
         "sdk.dir",
         "KAKAO_NATIVE_APP_KEY",
+        "KAKAO_REST_API_KEY",
         "NAVER_CLIENT_ID",
         "TMAP_APP_KEY",
         "AIRKOREA_SERVICE_KEY",
@@ -55,6 +56,10 @@ android {
             (project.findProperty("NAVER_CLIENT_ID") as? String)
                 ?: localProperties.getProperty("NAVER_CLIENT_ID")
                 ?: ""
+        val kakaoNativeKey =
+            (project.findProperty("KAKAO_NATIVE_APP_KEY") as? String)
+                ?: localProperties.getProperty("KAKAO_NATIVE_APP_KEY")
+                ?: ""
         val airKoreaServiceKey =
             (project.findProperty("AIRKOREA_SERVICE_KEY") as? String)
                 ?: localProperties.getProperty("AIRKOREA_SERVICE_KEY")
@@ -72,6 +77,7 @@ android {
                 ?: ""
         buildConfigField("String", "TMAP_APP_KEY", "\"${tmapAppKey.asBuildConfigString()}\"")
         buildConfigField("String", "NAVER_CLIENT_ID", "\"${naverClientId.asBuildConfigString()}\"")
+        buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"${kakaoNativeKey.asBuildConfigString()}\"")
         buildConfigField("String", "AIRKOREA_SERVICE_KEY", "\"${airKoreaServiceKey.asBuildConfigString()}\"")
         buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey.asBuildConfigString()}\"")
         buildConfigField("String", "KMA_SERVICE_KEY", "\"${kmaServiceKey.asBuildConfigString()}\"")
@@ -113,6 +119,7 @@ dependencies {
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("com.naver.maps:map-sdk:3.23.2")
+    implementation("com.kakao.maps.open:android:2.15.2")
 
     testImplementation("junit:junit:4.13.2")
     debugImplementation("androidx.compose.ui:ui-tooling:1.5.4")

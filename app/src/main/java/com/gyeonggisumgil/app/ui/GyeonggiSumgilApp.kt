@@ -122,7 +122,6 @@ fun GyeonggiSumgilApp() {
     var selectedTab by remember { mutableStateOf(AppTab.Home) }
     var showExitDialog by remember { mutableStateOf(false) }
     var walkingTrailMapFocus by remember { mutableStateOf<GyeonggiWalkingTrail?>(null) }
-    val routeRepository = remember { SampleRouteRepository() }
     val walkingTrailRepository = remember { GyeonggiWalkingTrailRepository() }
     val context = LocalContext.current
     val appCoroutineScope = rememberCoroutineScope()
@@ -352,9 +351,9 @@ fun GyeonggiSumgilApp() {
                     },
                     onRouteClick = { selectedTab = AppTab.Route }
                 )
-                AppTab.Route -> RouteScreen(
-                    routeRepository = routeRepository,
-                    walkingTrailMapFocus = walkingTrailMapFocus
+                AppTab.Route -> VerifiedRouteScreen(
+                    requestedPlaceLabel = walkingTrailMapFocus?.name,
+                    onClearRequestedPlace = { walkingTrailMapFocus = null }
                 )
                 AppTab.Chat -> ChatScreen(
                     currentAirQuality = currentAirQuality,
@@ -477,6 +476,11 @@ private fun HomeScreen(
         )
 
         SectionTitle("경기 산책로 후보")
+        Text(
+            text = "산책로 위치 자료입니다. 실제 보행 경로와 현재 통행 상태는 검증 전입니다.",
+            color = AppColors.Muted,
+            style = MaterialTheme.typography.bodySmall
+        )
         WalkingTrailRecommendationList(
             recommendations = walkingTrailRecommendations,
             onMapClick = onWalkingTrailMapClick
@@ -1033,7 +1037,7 @@ private fun ChatScreen(
     var isLoading by remember { mutableStateOf(false) }
     var aiRoutes by remember { mutableStateOf<List<RouteCandidate>>(emptyList()) }
     var selectedAiRouteId by remember { mutableStateOf<String?>(null) }
-    var aiRouteStatus by remember { mutableStateOf("현재 대기질·날씨·장소 기준으로 참고용 산책 후보를 만들 수 있습니다.") }
+    var aiRouteStatus by remember { mutableStateOf("대기질·날씨 상담은 유지합니다. 경로는 경로 탭에서 실제 API 응답을 검증합니다.") }
     var isLoadingAiRoute by remember { mutableStateOf(false) }
     var isMapGestureActive by remember { mutableStateOf(false) }
     var aiRequestedPlaceResolveFailed by remember { mutableStateOf(false) }
@@ -1275,6 +1279,16 @@ private fun ChatScreen(
     }
 
     fun handleRouteAction(routeAction: AiRouteConversationAction): Boolean {
+        if (routeAction !is AiRouteConversationAction.AdviceOnly) {
+            pendingAiRouteRequest = null
+            aiRoutes = emptyList()
+            selectedAiRouteId = null
+            selectedAiCourse = null
+            aiAnswer = "경로 탭에서 실제 도보 경로를 검증하고 있습니다. 장소 확인과 검증을 마친 후보를 연결하기 전까지 AI가 산책 코스를 만들지 않습니다."
+            aiRouteStatus = aiAnswer
+            addChatMessage("경기 숨길 AI", aiAnswer)
+            return true
+        }
         return when (routeAction) {
             AiRouteConversationAction.AdviceOnly -> {
                 pendingAiRouteRequest = null
@@ -1353,39 +1367,13 @@ private fun ChatScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         SectionTitle("AI 대기질 상담")
-        MapPreviewCard(
-            route = selectedAiRoute,
-            interactive = false,
-            isLoading = isLoadingAiRoute,
-            focusedTrail = if (!aiRequestedPlaceResolveFailed && selectedAiRoute?.coordinates?.isEmpty() == true) {
-                aiFocusedTrail
-            } else {
-                null
-            },
-            pickedStart = null,
-            pickedWaypoint = null,
-            pickedDestination = null,
-            pickTarget = null,
-            cameraTarget = if (aiRequestedPlaceResolveFailed) {
-                null
-            } else if ((selectedAiRoute?.coordinates?.size ?: 0) >= 2) {
-                null
-            } else {
-                selectedAiRoute?.coordinates?.firstOrNull()
-                    ?: selectedAiCourse?.course?.center
-                    ?: focusedTrail?.center
-            },
-            cameraRequestId = selectedAiCourse?.course?.id?.hashCode() ?: focusedTrail?.id?.hashCode() ?: 0,
-            onMapCenterChanged = {},
-            onMapGestureActiveChanged = { active -> isMapGestureActive = active }
-        )
         Text(
             text = aiRouteStatus,
             color = AppColors.Muted,
             style = MaterialTheme.typography.bodyMedium
         )
         Text(
-            text = "AI 후보는 공공데이터 대기질·날씨와 지도 API 보행 경로를 결합한 참고 정보입니다. 실제 이동 전 지도와 현장 보행 환경을 함께 확인하세요.",
+            text = "측정·예보 위치와 시각, 정보 부족을 함께 확인하세요. 대기질·날씨 상담만으로 경로의 통행 가능성을 판단하지 않습니다.",
             color = AppColors.Muted,
             style = MaterialTheme.typography.bodySmall
         )
@@ -1429,63 +1417,13 @@ private fun ChatScreen(
                         addChatMessage("사용자", userMessage)
                         message = ""
 
-                        val api = geminiApi
-                        if (api == null) {
-                            val routeAction = AiRouteConversationPlanner.plan(
-                                message = userMessage,
-                                pendingRequest = pendingAiRouteRequest,
-                                hasCurrentLocation = currentUserLocation != null
-                            )
-                            if (!handleRouteAction(routeAction)) {
-                                requestAdvice(userMessage)
-                            }
+                        if (AiRequestIntentClassifier.isRouteGenerationRequest(userMessage)) {
+                            aiAnswer = "경로 탭에서 실제 도보 경로를 검증하고 있습니다. 장소 확인과 경로 검증을 연결하기 전까지 AI가 코스를 생성하지 않습니다."
+                            aiRouteStatus = aiAnswer
+                            addChatMessage("경기 숨길 AI", aiAnswer)
                             return@Button
                         }
-
-                        coroutineScope.launch {
-                            isLoading = true
-                            val modelRouteAction = runCatching {
-                                withContext(Dispatchers.IO) {
-                                    val decisionPrompt = buildGeminiRouteDecisionPrompt(
-                                        userMessage = userMessage,
-                                        recentMessages = chatMessages + AiChatMessage("사용자", userMessage),
-                                        hasCurrentLocation = currentUserLocation != null,
-                                        currentAirQuality = currentAirQuality,
-                                        currentWeather = currentWeather,
-                                        walkingTrailRecommendations = walkingTrailRecommendations
-                                    )
-                                    val rawDecision = api.generateGroundedRouteDecision(
-                                        prompt = decisionPrompt,
-                                        locationBias = currentUserLocation
-                                    )
-                                    Log.d(APP_LOG_TAG, "AI route raw decision=$rawDecision")
-                                    val parsedDecision = AiRouteModelDecisionParser.parse(rawDecision)
-                                    Log.d(APP_LOG_TAG, "AI route parsed decision=$parsedDecision")
-                                    parsedDecision?.toConversationAction(userMessage)
-                                }
-                            }.getOrElse { throwable ->
-                                Log.e(APP_LOG_TAG, "AI route decision failed", throwable)
-                                null
-                            }
-                            isLoading = false
-
-                            val fallbackRouteAction = AiRouteConversationPlanner.plan(
-                                message = userMessage,
-                                pendingRequest = pendingAiRouteRequest,
-                                hasCurrentLocation = currentUserLocation != null
-                            )
-                            val routeAction = chooseRouteConversationAction(
-                                userMessage = userMessage,
-                                modelRouteAction = modelRouteAction,
-                                fallbackRouteAction = fallbackRouteAction
-                            )
-                            if (routeAction === fallbackRouteAction) {
-                                Log.d(APP_LOG_TAG, "AI route fallback action=$fallbackRouteAction")
-                            }
-                            if (!handleRouteAction(routeAction)) {
-                                requestAdvice(userMessage)
-                            }
-                        }
+                        requestAdvice(userMessage)
                     },
                     enabled = !isLoading && !isLoadingAiRoute,
                     modifier = Modifier.fillMaxWidth(),

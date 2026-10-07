@@ -1,5 +1,10 @@
 # 경기 숨길
 
+> 리부트 진행 중: 기존 `com.gyeonggisumgil.app`과 홈/대기질/날씨 UI를 유지하고 경로 부분을 교체한다.
+> 현재 경로 탭은 카카오 도보 API의 시험 입력과 반환 선형을 검증하는 화면이며, 자동 추천은 아직 연결하지 않았다.
+> AI 상담에서 기존 자동 코스 생성 연결은 제거했다. 아래의 기존 기능 소개 중 Naver/Tmap 자동 경로와 AI 코스 추천 설명은 이전 버전 기록이다.
+> [현재 실행·검증 상태](docs/reboot-route-integration.md)를 먼저 확인한다.
+
 <p align="center">
   <img src="icon.png" alt="경기 숨길 앱 아이콘" width="120" />
 </p>

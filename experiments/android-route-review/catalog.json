@@ -1,0 +1,5 @@
+[
+  {"id":"river","label":"탄천 짧은 구간 · 왕복 시험","site":"../kakao-walking/drafts/river.probe.json"},
+  {"id":"lake","label":"원천호수 · 기존 입력 · 미승인","site":"../kakao-walking/drafts/lake.probe.json"},
+  {"id":"lake-comparison","label":"원천호수 · 한 점 비교 입력 · 미승인","site":"../kakao-walking/drafts/lake.alternative.probe.json"}
+]

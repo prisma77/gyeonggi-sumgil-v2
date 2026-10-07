@@ -1,20 +1,13 @@
-﻿pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
 }
-
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
-        maven("https://repository.map.naver.com/archive/maven")
         maven("https://devrepo.kakao.com/nexus/repository/kakaomap-releases/")
     }
 }
-
-rootProject.name = "GyeonggiSumgil"
+rootProject.name = "SumgilRouteReview"
 include(":app")
