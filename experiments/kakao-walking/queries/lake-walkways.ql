@@ -1,0 +1,1 @@
+[out:json][timeout:25];way(480950645)->.lake;(.lake;way(around.lake:150)["highway"~"^(footway|path|pedestrian|cycleway)$"];);out body geom;

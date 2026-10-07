@@ -1,0 +1,10 @@
+{
+  "name": "Replace with the confirmed target",
+  "shape": "lake_loop",
+  "walk_source": {"url": "", "retrieved_at": "", "license": ""},
+  "walk_points_reviewed": false,
+  "walk_points": [],
+  "reference_walkway": [],
+  "water_source": {"url": "", "retrieved_at": "", "license": ""},
+  "water_boundary": []
+}

@@ -1,0 +1,142 @@
+{
+  "name": "Tancheon OSM segment 1286519135",
+  "shape": "river_out_and_back",
+  "walk_source": {
+    "url": "https://overpass-api.de/api/interpreter",
+    "retrieved_at": "2026-10-07T15:48:57.974580+00:00",
+    "license": "ODbL 1.0",
+    "attribution": "© OpenStreetMap contributors",
+    "license_url": "https://www.openstreetmap.org/copyright",
+    "query": "[out:json][timeout:25];way(around:500,37.4327928,127.1178722)[\"highway\"~\"^(footway|path|pedestrian|cycleway)$\"];out body geom;"
+  },
+  "walk_points_reviewed": true,
+  "walk_points": [
+    [
+      127.116869,
+      37.4275765
+    ],
+    [
+      127.1168385,
+      37.427859
+    ],
+    [
+      127.1168515,
+      37.428246
+    ],
+    [
+      127.1168551,
+      37.4283063
+    ],
+    [
+      127.1168621,
+      37.4283749
+    ],
+    [
+      127.1168705,
+      37.4284394
+    ],
+    [
+      127.1169043,
+      37.4286904
+    ],
+    [
+      127.1169317,
+      37.4288431
+    ]
+  ],
+  "reference_walkway": [
+    [
+      127.116869,
+      37.4275765
+    ],
+    [
+      127.1168385,
+      37.427859
+    ],
+    [
+      127.1168515,
+      37.428246
+    ],
+    [
+      127.1168551,
+      37.4283063
+    ],
+    [
+      127.1168621,
+      37.4283749
+    ],
+    [
+      127.1168705,
+      37.4284394
+    ],
+    [
+      127.116888,
+      37.4285605
+    ],
+    [
+      127.1168964,
+      37.428628
+    ],
+    [
+      127.1169043,
+      37.4286904
+    ],
+    [
+      127.116915,
+      37.4287513
+    ],
+    [
+      127.1169285,
+      37.4288273
+    ],
+    [
+      127.1169317,
+      37.4288431
+    ]
+  ],
+  "water_source": {},
+  "water_boundary": [],
+  "source_node_ids": [
+    11932634426,
+    2889066006,
+    2889066005,
+    14089782933,
+    14089782934,
+    14089782935,
+    14089782936,
+    14089782937,
+    14089782938,
+    14089782939,
+    14089782919,
+    2879065118
+  ],
+  "sample_node_ids": [
+    11932634426,
+    2889066006,
+    2889066005,
+    14089782933,
+    14089782934,
+    14089782935,
+    14089782938,
+    2879065118
+  ],
+  "source_way_ids": [
+    1286519135
+  ],
+  "source_network_length_m": 141.4,
+  "review": {
+    "status": "SOURCE_POINTS_REVIEWED_FOR_API_SPIKE_ONLY",
+    "walking_access": "UNVERIFIED",
+    "field_check": "NOT_EXECUTED",
+    "warnings": [
+      "OSM_CONNECTION_IS_NOT_CURRENT_ACCESS_PROOF",
+      "BARRIERS_AND_CONDITIONAL_ACCESS_NOT_CHECKED",
+      "KAKAO_RESPONSE_NOT_TESTED",
+      "SOURCE_NODE_SPACING_MAY_BE_UNEVEN"
+    ],
+    "scope": "Source identity, foot tag, exact node coordinates, sequence and sampling checked. Not current access or recommendation acceptance."
+  },
+  "selection_notes": [
+    "Named Tancheon Cycleway; foot=designated; shared cycleway; source tag bing 2010; current access not checked."
+  ]
+}

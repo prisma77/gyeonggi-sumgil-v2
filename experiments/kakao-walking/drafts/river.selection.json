@@ -1,0 +1,21 @@
+{
+  "name": "Tancheon OSM segment 1286519135",
+  "shape": "river_out_and_back",
+  "node_ids": [
+    11932634426,
+    2889066006,
+    2889066005,
+    14089782933,
+    14089782934,
+    14089782935,
+    14089782936,
+    14089782937,
+    14089782938,
+    14089782939,
+    14089782919,
+    2879065118
+  ],
+  "notes": [
+    "Named Tancheon Cycleway; foot=designated; shared cycleway; source tag bing 2010; current access not checked."
+  ]
+}
