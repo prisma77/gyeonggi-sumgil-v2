@@ -1,5 +1,9 @@
 package com.gyeonggisumgil.app.ui
 
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Base64
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -35,12 +40,14 @@ import com.gyeonggisumgil.app.BuildConfig
 import com.gyeonggisumgil.app.data.routevalidation.LocalReviewGateway
 import com.gyeonggisumgil.app.data.routevalidation.ReviewGateway
 import com.gyeonggisumgil.app.data.routevalidation.ReviewMap
+import com.kakao.vectormap.KakaoMapSdk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import kotlin.math.ceil
 
 /** First integrated route feature. Trial inputs are explicit; no place substitution or recommendation. */
@@ -57,7 +64,9 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
     var profileMenu by remember { mutableStateOf(false) }
     var modeMenu by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
+    var catalogAttempt by remember { mutableStateOf(0) }
     var mapReady by remember { mutableStateOf(false) }
+    var mapErrorCode by remember { mutableStateOf<Int?>(null) }
     var mapStatus by remember { mutableStateOf("로컬 검증 서버 연결 중") }
     var result by remember { mutableStateOf<JSONObject?>(null) }
     var requestStatus by remember { mutableStateOf("시험 입력을 직접 선택하세요. 장소 검색과 코스 자동 생성은 다음 단계입니다.") }
@@ -74,22 +83,26 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
         onDispose { owner.lifecycle.removeObserver(observer); renderer.finish() }
     }
 
-    LaunchedEffect(gateway) {
+    LaunchedEffect(gateway, catalogAttempt) {
+        loading = true
+        mapStatus = "로컬 검증 서버 연결 중"
         try {
             val response = withContext(Dispatchers.IO) { gateway.profiles() }
             val list = response.getJSONArray("profiles")
             profiles = (0 until list.length()).map { list.getJSONObject(it) }
             check(profiles.isNotEmpty())
+            requestStatus = "시험 입력을 직접 선택하세요. 장소 검색과 코스 자동 생성은 다음 단계입니다."
             if (BuildConfig.KAKAO_NATIVE_APP_KEY.isBlank()) {
                 mapStatus = "카카오 네이티브 키 미설정 · 경로 조회 중단"
             } else {
                 mapStatus = "카카오 지도 인증 중"
                 renderer.start(profiles.first().getJSONArray("start"), ready = {
-                    scope.launch { mapReady = true; mapStatus = "카카오 지도 준비 완료" }
+                    scope.launch { mapReady = true; mapErrorCode = null; mapStatus = "카카오 지도 준비 완료" }
                 }, error = { code ->
                     scope.launch {
                         mapReady = false
-                        mapStatus = "지도 인증/연결 실패 (${code ?: "미분류"}) · 현재 패키지 com.gyeonggisumgil.app"
+                        mapErrorCode = code
+                        mapStatus = "지도 인증/연결 실패 (${code ?: "미분류"}) · 현재 패키지 ${context.packageName}"
                     }
                 })
             }
@@ -97,7 +110,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
             throw cancelled
         } catch (_: Exception) {
             mapStatus = "서버 연결 실패 · PC 검증 서버와 USB 연결 확인 필요"
-            requestStatus = "서버 연결 후 경로 탭을 다시 여세요. 자동 재시도는 하지 않습니다."
+            requestStatus = "서버와 USB 연결을 확인한 뒤 아래의 다시 연결 버튼을 누르세요. 자동 재시도는 하지 않습니다."
         } finally {
             loading = false
         }
@@ -166,6 +179,48 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
             }
         }
         Text(mapStatus, style = MaterialTheme.typography.bodySmall)
+        if (mapErrorCode == 401) {
+            val keyHashes = remember(context) { currentSigningKeyHashes(context) }
+            val sdkRegistration = remember(context) { readSdkRegistration(context) }
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("카카오 지도 등록정보 확인", style = MaterialTheme.typography.titleSmall)
+                    Text("카카오디벨로퍼스의 앱 → 플랫폼 키 → 네이티브 앱 키에서 Android 등록정보를 확인하세요.",
+                        style = MaterialTheme.typography.bodySmall)
+                    SelectionContainer {
+                        Column {
+                            Text("패키지명: ${context.packageName}", style = MaterialTheme.typography.bodySmall)
+                            if (keyHashes.isEmpty()) {
+                                Text("키 해시를 읽지 못했습니다. Android 서명 설정을 확인하세요.", style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                keyHashes.forEach { keyHash ->
+                                    Text("키 해시: $keyHash", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            sdkRegistration?.let { registration ->
+                                Text("SDK 키 해시: ${registration.keyHash ?: "읽지 못함"}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    Text(sdkRegistration?.let { registration ->
+                        "SDK 초기화: ${if (registration.initialized) "완료" else "미완료"}" +
+                            " · 앱 키 설정: ${if (registration.configuredKeyMatches) "일치" else "불일치"}" +
+                            " · 패키지 전달: ${if (registration.packageMatches) "일치" else "불일치"}"
+                    } ?: "SDK 등록정보를 읽지 못했습니다.", style = MaterialTheme.typography.bodySmall)
+                    Text("local.properties의 KAKAO_NATIVE_APP_KEY가 선택한 앱의 네이티브 키인지 확인하세요. 설정 저장 후 경로 탭을 다시 열어 인증을 확인하세요.",
+                        style = MaterialTheme.typography.bodySmall)
+                    Text("같은 앱의 카카오맵 → 사용 설정 → 상태가 ON인지, 네이티브 키가 활성 상태인지도 확인하세요.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        if (!loading && profiles.isEmpty()) {
+            OutlinedButton(onClick = { catalogAttempt += 1 }, modifier = Modifier.fillMaxWidth()) {
+                Text("검증 서버 다시 연결")
+            }
+            Text("시험 입력 목록만 다시 가져옵니다. 실제 도보 API는 경로 조회 버튼을 눌러야 호출됩니다.",
+                style = MaterialTheme.typography.bodySmall)
+        }
         AndroidView(factory = { renderer.view }, modifier = Modifier.fillMaxWidth().height(300.dp))
         Text("S: 동일 출발·도착 / 1–5: 요청점 / 선: 반환된 실제 구간\n파란색도 추천 승인이 아닙니다. 붉은색은 검사 실패입니다.", style = MaterialTheme.typography.bodySmall)
         Card(Modifier.fillMaxWidth()) {
@@ -179,6 +234,41 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
             }
         }
     }
+}
+
+private data class SdkRegistration(
+    val initialized: Boolean,
+    val configuredKeyMatches: Boolean,
+    val packageMatches: Boolean,
+    val keyHash: String?
+)
+
+private fun readSdkRegistration(context: Context): SdkRegistration? = try {
+    KakaoMapSdk.INSTANCE?.let { sdk ->
+        SdkRegistration(
+            initialized = KakaoMapSdk.isInitialized(),
+            configuredKeyMatches = sdk.appKey == BuildConfig.KAKAO_NATIVE_APP_KEY,
+            packageMatches = sdk.context?.packageName == context.packageName,
+            keyHash = sdk.hashKey?.takeIf { it.matches(Regex("[A-Za-z0-9+/]{27}=")) }
+        )
+    }
+} catch (_: Exception) {
+    null
+}
+
+private fun currentSigningKeyHashes(context: Context): List<String> = try {
+    val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        context.packageManager.getPackageInfo(context.packageName,
+            PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()))
+    } else {
+        @Suppress("DEPRECATION")
+        context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+    }
+    info.signingInfo?.apkContentsSigners?.map { signature ->
+        Base64.encodeToString(MessageDigest.getInstance("SHA-1").digest(signature.toByteArray()), Base64.NO_WRAP)
+    }.orEmpty()
+} catch (_: Exception) {
+    emptyList()
 }
 
 private fun describeSource(source: JSONObject) =

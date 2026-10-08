@@ -2777,30 +2777,38 @@ private suspend fun Context.awaitCurrentLocation(
     locationManager: LocationManager,
     provider: String
 ): LocatedGeoPoint? {
+    if (!hasFineLocationPermission()) return null
+
     return suspendCancellableCoroutine { continuation ->
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val cancellationSignal = CancellationSignal()
-            locationManager.getCurrentLocation(
-                provider,
-                cancellationSignal,
-                mainExecutor
-            ) { location ->
-                if (continuation.isActive) {
-                    continuation.resume(location?.toLocatedGeoPoint())
-                }
-            }
-            continuation.invokeOnCancellation { cancellationSignal.cancel() }
-        } else {
-            val listener = object : LocationListener {
-                override fun onLocationChanged(location: Location) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val cancellationSignal = CancellationSignal()
+                locationManager.getCurrentLocation(
+                    provider,
+                    cancellationSignal,
+                    mainExecutor
+                ) { location ->
                     if (continuation.isActive) {
-                        continuation.resume(location.toLocatedGeoPoint())
+                        continuation.resume(location?.toLocatedGeoPoint())
                     }
-                    locationManager.removeUpdates(this)
                 }
+                continuation.invokeOnCancellation { cancellationSignal.cancel() }
+            } else {
+                val listener = object : LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        if (continuation.isActive) {
+                            continuation.resume(location.toLocatedGeoPoint())
+                        }
+                        locationManager.removeUpdates(this)
+                    }
+                }
+                locationManager.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+                continuation.invokeOnCancellation { locationManager.removeUpdates(listener) }
             }
-            locationManager.requestSingleUpdate(provider, listener, Looper.getMainLooper())
-            continuation.invokeOnCancellation { locationManager.removeUpdates(listener) }
+        } catch (_: SecurityException) {
+            if (continuation.isActive) {
+                continuation.resume(null)
+            }
         }
     }
 }
@@ -2837,9 +2845,13 @@ private fun Context.findBestLastKnownLocatedLocation(maxAgeMillis: Long? = null)
     )
     return providers
         .mapNotNull { provider ->
-            runCatching {
+            try {
                 locationManager.getLastKnownLocation(provider)
-            }.getOrNull()
+            } catch (_: SecurityException) {
+                null
+            } catch (_: IllegalArgumentException) {
+                null
+            }
         }
         .filter { location ->
             maxAgeMillis == null || System.currentTimeMillis() - location.time <= maxAgeMillis

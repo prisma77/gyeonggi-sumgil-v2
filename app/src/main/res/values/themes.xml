@@ -1,6 +1,6 @@
 ﻿<resources>
-    <style name="Theme.GyeonggiSumgil" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.GyeonggiSumgil" parent="Theme.GyeonggiSumgil.Base" />
+    <style name="Theme.GyeonggiSumgil.Base" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowFullscreen">true</item>
-        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>
