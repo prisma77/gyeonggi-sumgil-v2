@@ -13,7 +13,7 @@ def eligible(tags):
     if tags.get("access") in ("no", "private") and not explicit:
         return False
     highway = tags.get("highway")
-    return highway in ("footway", "path", "pedestrian") or highway == "cycleway" and explicit
+    return highway in ("footway", "path", "pedestrian", "steps") or highway == "cycleway" and explicit
 
 
 def network(source):

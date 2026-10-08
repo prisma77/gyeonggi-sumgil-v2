@@ -1,5 +1,6 @@
 [
-  {"id":"river","label":"탄천 짧은 구간 · 왕복 시험","site":"../kakao-walking/drafts/river.probe.json"},
-  {"id":"lake","label":"원천호수 · 기존 입력 · 미승인","site":"../kakao-walking/drafts/lake.probe.json"},
-  {"id":"lake-comparison","label":"원천호수 · 한 점 비교 입력 · 미승인","site":"../kakao-walking/drafts/lake.alternative.probe.json"}
+  {"id":"river","label":"탄천 짧은 구간 · 왕복 시험","site":"../kakao-walking/drafts/river.probe.json","source_file":"../kakao-walking/sources/river-walkways.osm.json"},
+  {"id":"lake","label":"원천호수 · 기존 입력 · 미승인","site":"../kakao-walking/drafts/lake.probe.json","source_file":"../kakao-walking/sources/lake-walkways.osm.json"},
+  {"id":"lake-comparison","label":"원천호수 · 4번 보행로 비교","site":"../kakao-walking/drafts/lake.alternative.probe.json","source_file":"../kakao-walking/sources/lake-walkways.osm.json"},
+  {"id":"lake-ground-cycle","label":"원천호수 · 외곽 순환 비교 · 출발점 변경","site":"../kakao-walking/drafts/lake.ground-cycle.probe.json","source_file":"../kakao-walking/sources/lake-walkways-bbox.osm.json"}
 ]

@@ -36,7 +36,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_catalog_is_not_a_paid_route_lookup(self):
         data = self.service.catalog()
-        self.assertEqual(3, len(data["profiles"]))
+        self.assertEqual(4, len(data["profiles"]))
         self.assertEqual(0, self.client.calls)
         self.assertNotIn("paths", json.dumps(data))
 
@@ -46,6 +46,23 @@ class BridgeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.service.route(request)
         self.assertEqual(0, self.client.calls)
+
+    def test_failed_source_input_is_blocked_before_a_paid_call(self):
+        self.catalog["river"][1]["input_validation"]["failures"].append("INPUT_POINT_NOT_AN_ELIGIBLE_SOURCE_NODE")
+        with self.assertRaises(ValueError):
+            self.service.route(dict(id="river", mode="SHORTEST"))
+        self.assertEqual(0, self.client.calls)
+
+    def test_source_audit_survives_catalog_and_response_without_becoming_approval(self):
+        catalog = self.service.catalog()["profiles"]
+        audit = next(p for p in catalog if p["id"] == "lake")["input_validation"]
+        point4 = next(p for p in audit["points"] if p["label"] == "4")
+        self.assertEqual(7853789387, point4["source_node_id"])
+        self.assertTrue(point4["bridge_tagged"])
+        self.assertEqual("UNVERIFIED", audit["walking_access"])
+        data = self.service.route(dict(id="river", mode="SHORTEST"))
+        self.assertIn("input_validation", data)
+        self.assertEqual("NOT_ACCEPTED", data["recommendation_quality"])
 
     def test_route_steps_keep_separation_and_same_point_via_five(self):
         data = self.service.route(dict(id="river", mode="SHORTEST"))

@@ -221,14 +221,26 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
             Text("시험 입력 목록만 다시 가져옵니다. 실제 도보 API는 경로 조회 버튼을 눌러야 호출됩니다.",
                 style = MaterialTheme.typography.bodySmall)
         }
+        result?.let { response ->
+            val inspection = response.getJSONObject("inspection")
+            val failed = inspection.optJSONArray("failures")?.length()?.let { it > 0 } == true
+            Text(if (failed) "검사 실패 · 추천 미승인\n${describeCodes(inspection.optJSONArray("failures"))}"
+                else "조회 완료 · 순환·현재 통행 확인 전까지 추천 미승인",
+                color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+        }
         AndroidView(factory = { renderer.view }, modifier = Modifier.fillMaxWidth().height(300.dp))
-        Text("S: 동일 출발·도착 / 1–5: 요청점 / 선: 반환된 실제 구간\n파란색도 추천 승인이 아닙니다. 붉은색은 검사 실패입니다.", style = MaterialTheme.typography.bodySmall)
+        Text("S: 동일 출발·도착 / 1–5: 요청점 / 선: 반환된 실제 구간\n원 중심은 요청 좌표입니다. 선과 떨어진 점은 경유점 검사 결과를 확인하세요.\n파란색도 추천 승인이 아닙니다. 붉은색은 검사 실패입니다.", style = MaterialTheme.typography.bodySmall)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(requestStatus)
                 result?.let { Text(describeReview(it), style = MaterialTheme.typography.bodySmall) }
                 selected?.let { profile ->
-                    if (!profile.isNull("input_change")) Text("한 점을 바꾼 비교 입력입니다. 원래 요청의 자동 대체가 아닙니다.")
+                    profile.optJSONObject("input_change")?.let { change ->
+                        Text(if (change.has("alternative_start_node"))
+                            "호수 외곽 보행망에서 새로 고른 비교 입력입니다. 출발점도 달라졌습니다. 원래 요청을 대체하지 않습니다."
+                        else "4번을 보행로의 원본 노드로 바꾼 비교 입력입니다. 원래 요청을 대체하지 않습니다.")
+                    }
+                    profile.optJSONObject("input_validation")?.let { Text(describeInputs(it), style = MaterialTheme.typography.bodySmall) }
                     Text(describeSource(profile.getJSONObject("source")), style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -275,7 +287,35 @@ private fun describeSource(source: JSONObject) =
     "입력: ${source.optString("attribution")} · ${source.optString("license")}\n수집: ${source.optString("retrieved_at")} (현장 관측 시각 아님)\n출처: ${source.optString("url")}\n이용 조건: ${source.optString("license_url")}"
 
 private fun describeCodes(array: JSONArray?): String = if (array == null || array.length() == 0) "없음" else
-    (0 until array.length()).joinToString("\n") { array.getString(it) }
+    (0 until array.length()).joinToString("\n") { index ->
+        when (val code = array.getString(index)) {
+            "WAYPOINT_VISIT_OR_ORDER_MISMATCH" -> "경유점 방문·순서 조건 불일치"
+            "OUTSIDE_REFERENCE_WALKWAY" -> "확인한 외곽 보행로와 반환 경로 불일치"
+            "TARGET_WATER_NOT_ENCLOSED" -> "전체 수역을 둘러싸는 조건 불충족"
+            "LAP_DEGENERATE_GEOMETRY" -> "면을 둘러싸는 순환선이 아님"
+            "LAP_DISCONNECTED_GEOMETRY" -> "구간 끝점이 이어지지 않아 순환 평가 보류"
+            "LAP_OPEN_GEOMETRY" -> "선형이 정확히 닫히지 않아 순환 평가 보류"
+            "LAP_NON_SIMPLE_GEOMETRY" -> "반복·자기 접촉/교차가 있어 한 바퀴 판정 보류"
+            "TARGET_WATER_INVALID_GEOMETRY" -> "수역 경계 형상 검토 필요"
+            "TARGET_WATER_BOUNDARY_CONTACT_REQUIRES_REVIEW" -> "경로와 수역 경계가 겹쳐 정확도 검토 필요"
+            "WATER_CROSSING_REQUIRES_BRIDGE_CHECK" -> "수역 통과 의심 구간의 교량 확인 필요"
+            "REPETITION_AND_TOPOLOGY_REVIEW_REQUIRED" -> "반복·순환 구조의 추가 검토 필요"
+            "LEG_WAYPOINT_ALIGNMENT_REQUIRES_REVIEW" -> "API 구간 경계와 경유점 대응 검토 필요"
+            else -> code
+        }
+    }
+
+private fun describeInputs(audit: JSONObject): String {
+    val points = audit.optJSONArray("points") ?: return "입력점 출처 평가 못함"
+    val failures = audit.optJSONArray("failures")
+    val summary = if (audit.optString("status") == "SOURCE_MATCHED_REVIEW_REQUIRED")
+        "입력 ${points.length()}점은 원본 OSM 보행 노드와 일치 · 현재 통행 미확인"
+    else "입력점 출처·연결 검사 실패: ${describeCodes(failures)}"
+    val details = (0 until points.length()).map { points.getJSONObject(it) }.filter { it.optBoolean("bridge_tagged") }
+        .joinToString(", ") { if (it.getString("label") == "S") "S" else "${it.getString("label")}번" }
+    return summary + (if (details.isNotEmpty()) "\n$details: OSM 교량 태그 있음 · 현재 통행·API 스냅 원인 미확인" else "") +
+        "\n원본 노드 연결은 실제 통행이나 호수 한 바퀴의 증명이 아닙니다."
+}
 
 private fun describeReview(response: JSONObject): String {
     val inspection = response.getJSONObject("inspection")
@@ -284,8 +324,21 @@ private fun describeReview(response: JSONObject): String {
     return "HTTP ${response.getInt("http_status")} / ${inspection.optString("api_status")} · 추천 미승인" +
         (if (distance.isFinite() && time.isFinite()) "\nAPI ${distance.toInt()}m · ${ceil(time / 60).toInt()}분 (${time.toInt()}초)" else "\n유효 거리·시간 없음") +
         "\n구간 ${response.getJSONArray("paths").length()}개 · 호출 ${response.getInt("calls_sent")}/${response.getInt("call_limit")}" +
-        "\n경유점 차이(m): ${inspection.optJSONArray("waypoint_min_distance_m") ?: "평가 못함"}" +
+        "\n경유점과 반환 선형의 차이: " + (inspection.optJSONArray("waypoint_min_distance_m")?.let { offsets ->
+            (0 until offsets.length()).joinToString(", ") { index ->
+                val offset = offsets.getDouble(index)
+                "${index + 1}번 ${offset}m${if (offset > 30) " (검사 기준 30m 초과)" else ""}"
+            }
+        } ?: "평가 못함") +
+        inspection.optJSONObject("lap_validation")?.let { lap ->
+            "\n호수 순환: " + when (lap.optString("status")) {
+                "PASS_GEOMETRY_ONLY" -> "선형 조건만 통과 · 실제 통행 미확인"
+                "FAIL" -> "순환 선형 조건 불충족"
+                else -> "판정 보류"
+            } + "\n${describeCodes(lap.optJSONArray("failures"))}\n${describeCodes(lap.optJSONArray("unresolved"))}"
+        }.orEmpty() +
         "\n순서: ${inspection.optString("waypoint_order_check", "평가 못함")}" +
+        "\n동일 선분 반복: ${inspection.optDouble("exact_edge_retraced_distance_m", 0.0)}m (다른 좌표 분할의 반복은 미포함)" +
         "\n검사 실패: ${describeCodes(inspection.optJSONArray("failures"))}" +
         "\n추가 검토: ${describeCodes(inspection.optJSONArray("unresolved"))}" +
         "\n현재 출입·통행 미확인. ACCESSIBLE은 무장애 보장이 아닙니다." +

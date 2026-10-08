@@ -80,7 +80,7 @@ def ordered_visits(segments: list[tuple[Point, Point]], targets: list[Point], to
 
 def lake_topology_diagnostics(path: list[Point], water: list[Point], divisions=30) -> dict:
     """Sampled geometry diagnostics; no route creation or acceptance threshold."""
-    if meters(path[0], path[-1]) > 1:
+    if path[0] != path[-1]:
         return {"lake_topology_sampling": "NOT_EVALUATED_OPEN_GEOMETRY"}
     xmin, xmax = min(p[0] for p in water), max(p[0] for p in water)
     ymin, ymax = min(p[1] for p in water), max(p[1] for p in water)
@@ -230,24 +230,28 @@ def inspect(payload: dict, start: Point, end: Point, shape: str = "point_to_poin
             else:
                 unknowns.append("REFERENCE_WALKWAY_MISSING")
         if shape == "lake_loop":
+            from validate_lap import analysis_ring, inspect_lap
+            lap = inspect_lap(paths, water or [])
+            result["lap_validation"] = lap
+            failures.extend(lap["failures"])
+            unknowns.extend(lap["unresolved"])
             if water and len(water) >= 3:
-                if any(gap > 1 for gap in seams):
-                    result["lake_topology_sampling"] = "NOT_EVALUATED_DISCONNECTED_GEOMETRY"
+                ring = analysis_ring(paths)
+                if ring is None:
+                    result["lake_topology_sampling"] = ("NOT_EVALUATED_OPEN_GEOMETRY"
+                        if "LAP_OPEN_GEOMETRY" in lap["unresolved"] else "NOT_EVALUATED_DISCONNECTED_GEOMETRY")
                 else:
-                    result.update(lake_topology_diagnostics(path, water))
-                # Test all boundary vertices and midpoints, not only the lake centroid.
+                    result.update(lake_topology_diagnostics(ring, water))
+                # Legacy sampled diagnostics are only meaningful for a valid continuous ring.
                 water_checks = water + [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in zip(water, water[1:] + water[:1])]
-                if not all(inside(p, path) for p in water_checks):
-                    failures.append("TARGET_WATER_NOT_ENCLOSED")
-                    excluded = [p for p in water_checks if not inside(p, path)]
+                if "outside_water_vertex_count" in lap and not all(inside(p, ring) for p in water_checks):
+                    excluded = [p for p in water_checks if not inside(p, ring)]
                     result["water_boundary_outside_fraction"] = round(len(excluded) / len(water_checks), 4)
                     result["max_outside_boundary_distance_m"] = round(max(min(segment_distance(p, a, b)
                                                                     for step in paths for a, b in zip(step, step[1:]))
                                                                 for p in excluded), 1)
                 if any(inside(p, water) for step in paths for a, b in zip(step, step[1:]) for p in samples(a, b)):
                     unknowns.append("WATER_CROSSING_REQUIRES_BRIDGE_CHECK")
-            else:
-                unknowns.append("TARGET_WATER_BOUNDARY_MISSING")
         if shape == "river_out_and_back":
             # Dedicated directional/turnpoint checks are needed before acceptance.
             unknowns.append("TURNPOINT_AND_DIRECTION_REVIEW_REQUIRED")

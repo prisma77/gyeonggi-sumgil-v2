@@ -204,3 +204,64 @@ python -B experiments/kakao-walking/compare_input_point.py experiments/kakao-wal
 진단 결과를 근거로 수역 경계 실패를 성공으로 바꾸거나 추천을 승인하지 않는다.
 정확히 같은 끝점 쌍의 재통과 길이는 반복의 **하한치**이며 선형 분할이 다르면 반복을 놓칠 수 있다.
 현재 모든 호수 후보는 교량·경계 정확도·통제 정보·실제 지도 중첩 확인 전까지 승인 보류다.
+
+## 입력점과 단일 순환 검증 강화 — 2026-10-08
+
+검토 전 초안도 도보 API 없이 원본 자료와 대조할 수 있다.
+
+```powershell
+python -B experiments/kakao-walking/audit_inputs.py experiments/kakao-walking/drafts/lake.site.json experiments/kakao-walking/sources/lake-walkways.osm.json
+```
+
+`audit_inputs.py`는 좌표가 해당 원본 보행 node와 정확히 일치하는지, 출처 메타데이터와
+수역 원본이 일치하는지, 실제 node ID를 공유한 보행 허용 구간으로 요청 순서와 복귀가
+연결되는지 검사한다. 가까운 좌표나 평면상 교차를 연결로 만들지 않으며 `oneway:foot`를 따른다.
+교량·명시적 `foot`·조건부 태그를 구분해 보고한다.
+원본 노드 태그와 현재 통행은 미확인이다. 이 도구는 `walk_points_reviewed`를 변경하지 않는다.
+태그 의미는 [OSM foot](https://wiki.openstreetmap.org/wiki/Key:foot),
+[OSM bridge](https://wiki.openstreetmap.org/wiki/Key:bridge) 참조.
+
+`validate_lap.py`는 실제 step의 연결과 출발점 복귀를 검사한다.
+2026-10-09 보완: 1mm 이하 끝점 차이는 분석 모델에서만 수치상 동등하게 처리한다.
+실제 API 응답에서 관측한 0.885mm 차이를 실제 단절로 취급했던 과도한 판정을 수정했다.
+원본 API 좌표와 지도 선형은 바꾸지 않으며, 1mm를 넘는 간격은 연결하거나 닫지 않는다.
+끝점 차이는 반올림하지 않은 거리와 step 번호로 보고한다. 미세한 숫자 차이가 실제 길의 단절을 뜻하지는 않는다.
+자기 교차·접촉·중복을 포함하는 선형은 별도 분석이 필요하므로 보류하며 왕복·퇴화 선형은 실패한다.
+단순한 닫힌 선형에 대해 수역 모든 꼭짓점과 **전체 경계 선분의 교차**를 검사한다.
+꼭짓점·중점 표본만 검사했을 때 놓칠 수 있는 좁은 홈의 경계 통과를 회귀 검사한다.
+수역 경계와의 접촉은 정확도 검토 대상으로 남긴다.
+
+`PASS_GEOMETRY_ONLY`는 이 모델의 단일 수역 포함 조건만 통과했다는 뜻이다.
+지역 평면 투영·부동소수점 판정을 사용하며 지형·수역 경계의 현실 정확도나 현재 통행을 증명하지 않는다.
+접근 구간의 왕복, 공유 교량, 서로 다른 선형 분할의 반복을 자동 제거하거나 정상적인 한 바퀴로 승인하지 않는다.
+수역 격자와 정확한 동일 선분 반복은 계속 진단 용도다. 단절·개방 선형의 수역 포함·격자 결과는 만들지 않는다.
+
+오프라인 검사 70개 통과. 합성 자료 검사와 기존 실제 입력의 차단 검사이며 코스 품질 증거가 아니다.
+Android bridge 검사 8개와 실제 후속 실험은 `docs/reboot-route-integration.md`의 최신 기록을 따른다.
+
+## 연결된 원본 보행망에서 외곽 후보 찾기 — 2026-10-09
+
+`fetch_osm_bbox.py`는 기존 원본 수역의 경계에서 150m 확장한 작은 영역을
+[공식 OSM Map API](https://wiki.openstreetmap.org/wiki/API_v0.6#Retrieving_map_data_by_bounding_box:_GET_/api/0.6/map)로 한 번 읽는다.
+JSON way의 좌표는 반환된 node ID의 실제 좌표로만 구성한다. ODbL 출처·수집 시각을 함께 저장한다.
+Overpass 질의 두 건이 HTTP 504로 실패해 독립적인 원본 추출 방법을 사용했으며 자동 재시도하지 않았다.
+계단도 보행망에 포함하되 `foot`·`access` 제한과 `oneway:foot`를 유지한다.
+계단의 보행 허용은 휠체어 접근 가능성의 증명이 아니다.
+
+`plan_source_cycle.py`는 특정 공원 좌표 없이 지정한 원본 수역과 시작 node를 사용한다.
+수역과 교차하는 원본 간선을 제외하고 방향 그래프에서 한 번 회전하는 닫힌 경로를 탐색한다.
+그 안에서 자기 교차가 없고 전체 수역을 감싸는 단순 원본 순환을 검사한다.
+출발점의 진입 왕복을 제외하면 출발점 변경을 명시하고, 순환 위 지상 원본 노드를 순서대로 고른다.
+경계가 오목해 평균점이 수역 밖이거나 필요한 원본 연결이 없으면 중단한다.
+교량을 배제한 간선 탐색은 전체 수역 포함을 위한 기하 검색이며 교량 통행 불가 판정이 아니다.
+기본 결과는 검토 전 초안이며, 독립 입력 검토를 수행한 뒤에만 `--review-source-inputs`로 실험할 수 있다.
+이 플래그는 현재 통행이나 추천 품질을 승인하지 않는다.
+
+```powershell
+python -B experiments/kakao-walking/plan_source_cycle.py experiments/kakao-walking/sources/lake-walkways-bbox.osm.json experiments/kakao-walking/drafts/new-cycle.site.json --water-way 480950645 --start-node 5548419116
+```
+
+원천호수 원본 순환 후보는 3,017.1m지만 실제 카카오 경로는 3,204m로 다르다.
+경유점 방문 검사는 통과했지만 3번 차이 28.7m, 동일 선분 재통과 하한 22.1m,
+선택한 외곽 원본 경로와의 근접 비율 63.79%로 추천 승인은 계속 미완료다.
+99.83%의 수역 격자 포함도 표본 진단이며 전체 수역 순환 성공으로 사용하지 않는다.

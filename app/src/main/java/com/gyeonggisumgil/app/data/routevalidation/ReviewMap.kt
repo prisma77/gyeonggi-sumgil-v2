@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.view.MotionEvent
+import android.widget.FrameLayout
 import com.kakao.vectormap.KakaoMap
 import com.kakao.vectormap.KakaoMapReadyCallback
 import com.kakao.vectormap.LatLng
@@ -25,7 +27,29 @@ import org.json.JSONObject
 
 /** Draws supplied coordinates only; each API step remains a separate line. */
 class ReviewMap(context: Context) {
-    val view = MapView(context)
+    private val mapView = MapView(context)
+    val view = object : FrameLayout(context) {
+        init {
+            addView(mapView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        }
+
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            // Keep map gestures ahead of the surrounding Compose verticalScroll.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                parent?.requestDisallowInterceptTouchEvent(true)
+            }
+            val handled = super.dispatchTouchEvent(event)
+            if (!handled || event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            return handled
+        }
+
+        override fun onDetachedFromWindow() {
+            parent?.requestDisallowInterceptTouchEvent(false)
+            super.onDetachedFromWindow()
+        }
+    }
     private var map: KakaoMap? = null
     private var started = false
     private var result: JSONObject? = null
@@ -41,7 +65,7 @@ class ReviewMap(context: Context) {
     fun start(sourceStart: JSONArray, ready: () -> Unit, error: (Int?) -> Unit) {
         if (started) return
         started = true
-        view.start(object : MapLifeCycleCallback() {
+        mapView.start(object : MapLifeCycleCallback() {
             override fun onMapDestroy() { map = null }
             override fun onMapError(exception: Exception) {
                 map = null
@@ -56,7 +80,7 @@ class ReviewMap(context: Context) {
                 ready()
             }
         })
-        view.resume()
+        mapView.resume()
     }
 
     fun clear() {
@@ -105,7 +129,7 @@ class ReviewMap(context: Context) {
             paint.textSize = 28f
             paint.textAlign = Paint.Align.CENTER
             canvas.drawText(if (index == 0) "S" else "$index", 32f, 42f, paint)
-            val markerStyle = LabelStyles.from(LabelStyle.from(marker))
+            val markerStyle = LabelStyles.from(LabelStyle.from(marker).setAnchorPoint(0.5f, 0.5f))
             labelLayer.addLabel(LabelOptions.from(point).setStyles(markerStyle))
         }
         if (fitPoints.isNotEmpty()) {
@@ -113,7 +137,7 @@ class ReviewMap(context: Context) {
         }
     }
 
-    fun resume() { if (started) view.resume() }
-    fun pause() { if (started) view.pause() }
-    fun finish() { result = null; if (started) view.finish(); map = null }
+    fun resume() { if (started) mapView.resume() }
+    fun pause() { if (started) mapView.pause() }
+    fun finish() { result = null; if (started) mapView.finish(); map = null }
 }

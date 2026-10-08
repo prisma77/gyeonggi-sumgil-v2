@@ -20,6 +20,11 @@ def way(identifier, nodes, coordinates, **tags):
 
 
 class SourceTopologyTests(unittest.TestCase):
+    def test_steps_are_pedestrian_edges_but_access_restrictions_still_apply(self):
+        self.assertTrue(eligible({"highway": "steps"}))
+        self.assertFalse(eligible({"highway": "steps", "foot": "no"}))
+        self.assertFalse(eligible({"highway": "steps", "access": "private"}))
+
     def test_cycleway_without_pedestrian_permission_is_excluded(self):
         self.assertFalse(eligible({"highway": "cycleway"}))
         self.assertFalse(eligible({"highway": "cycleway", "foot": "no"}))

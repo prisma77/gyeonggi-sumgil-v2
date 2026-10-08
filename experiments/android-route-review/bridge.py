@@ -12,6 +12,7 @@ import sys
 EXPERIMENTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EXPERIMENTS / "kakao-walking"))
 import probe
+from audit_inputs import audit_inputs
 
 
 def load_catalog(path):
@@ -24,7 +25,12 @@ def load_catalog(path):
         site_path = (path.parent / entry["site"]).resolve()
         if not site_path.is_relative_to(EXPERIMENTS):
             raise ValueError("Site must be inside experiments")
-        profiles[identifier] = (entry["label"], probe.load_site(site_path))
+        source_path = (path.parent / entry["source_file"]).resolve()
+        if not source_path.is_relative_to(EXPERIMENTS):
+            raise ValueError("Source must be inside experiments")
+        site = probe.load_site(site_path)
+        site["input_validation"] = audit_inputs(site, json.loads(source_path.read_text(encoding="utf-8-sig")))
+        profiles[identifier] = (entry["label"], site)
     if not profiles:
         raise ValueError("Empty catalog")
     return profiles
@@ -39,6 +45,7 @@ class ReviewService:
         return {"profiles": [dict(id=identifier, label=label, name=site["name"],
                                  shape=site["shape"], source=site["walk_source"],
                                  input_change=site.get("input_change"),
+                                 input_validation=site["input_validation"],
                                  start=site["walk_points"][0])
                              for identifier, (label, site) in self.profiles.items()],
                 "calls_sent": self.client.calls, "call_limit": self.client.limit}
@@ -50,6 +57,8 @@ class ReviewService:
         if not isinstance(identifier, str) or identifier not in self.profiles or mode not in probe.MODES:
             raise ValueError("Unknown profile or mode")
         _, site = self.profiles[identifier]
+        if site["input_validation"]["failures"]:
+            raise ValueError("Source input validation failed; no routing request sent")
         _, start, end, via, shape = next(case for case in probe.cases(site["walk_points"], site["shape"])
                                         if case[0] == "same_point_via_5")
         params = dict(start_x=start[0], start_y=start[1], end_x=end[0], end_y=end[1],
@@ -72,6 +81,7 @@ class ReviewService:
         return dict(id=identifier, mode=mode, http_status=status, inspection=result,
                     paths=paths, start=start, end=end, via=via,
                     source=site["walk_source"], water_source=site.get("water_source"),
+                    input_validation=site["input_validation"],
                     requested_at=datetime.now(timezone.utc).isoformat(), elapsed_s=round(elapsed, 2),
                     calls_sent=self.client.calls, call_limit=self.client.limit,
                     recommendation_quality="NOT_ACCEPTED", billing="CONSOLE_CHECK_REQUIRED")

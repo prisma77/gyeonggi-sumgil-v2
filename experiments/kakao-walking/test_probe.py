@@ -82,7 +82,20 @@ class GeometrySafetyTests(unittest.TestCase):
     def test_closed_out_and_back_is_not_a_lake_lap(self):
         path = [self.loop[0], self.loop[1], self.loop[0]]
         result = inspect(response([path]), path[0], path[-1], "lake_loop", self.loop, self.water)
-        self.assertIn("TARGET_WATER_NOT_ENCLOSED", result["failures"])
+        self.assertIn("LAP_DEGENERATE_GEOMETRY", result["failures"])
+
+    def test_small_step_gap_does_not_get_an_invented_enclosure(self):
+        second = [(self.loop[2][0] + 0.000001, self.loop[2][1]), *self.loop[3:]]
+        result = inspect(response([self.loop[:3], second]), self.loop[0], self.loop[0], "lake_loop", self.loop, self.water)
+        self.assertIn("LAP_DISCONNECTED_GEOMETRY", result["unresolved"])
+        self.assertEqual("NOT_EVALUATED_DISCONNECTED_GEOMETRY", result["lake_topology_sampling"])
+        self.assertNotIn("water_boundary_outside_fraction", result)
+
+    def test_small_endpoint_gap_does_not_get_a_winding_measurement(self):
+        path = self.loop[:-1] + [(self.loop[0][0] + 0.000001, self.loop[0][1])]
+        result = inspect(response([path]), path[0], path[-1], "lake_loop", self.loop, self.water)
+        self.assertIn("LAP_OPEN_GEOMETRY", result["unresolved"])
+        self.assertEqual("NOT_EVALUATED_OPEN_GEOMETRY", result["lake_topology_sampling"])
 
     def test_outer_road_loop_is_not_accepted_for_enclosing_lake(self):
         outer = [(126.998, 36.998), (127.004, 36.998), (127.004, 37.004),
