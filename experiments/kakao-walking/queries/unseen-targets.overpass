@@ -1,0 +1,6 @@
+[out:json][timeout:25];
+(
+  nwr["name"="백운호수"];
+  way["waterway"="river"]["name"="오산천"];
+);
+out geom;

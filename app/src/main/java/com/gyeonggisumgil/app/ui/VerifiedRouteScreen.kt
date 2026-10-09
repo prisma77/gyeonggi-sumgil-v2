@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.gyeonggisumgil.app.BuildConfig
 import com.gyeonggisumgil.app.GyeonggiSumgilApplication
 import com.gyeonggisumgil.app.MapSdkStartup
+import com.gyeonggisumgil.app.data.places.PlaceCandidate
 import com.gyeonggisumgil.app.data.routevalidation.LocalReviewGateway
 import com.gyeonggisumgil.app.data.routevalidation.ReviewGateway
 import com.gyeonggisumgil.app.data.routevalidation.ReviewMap
@@ -57,11 +58,13 @@ import kotlin.math.ceil
 @Composable
 fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () -> Unit) {
     val context = LocalContext.current
+    var confirmedPlace by remember { mutableStateOf<PlaceCandidate?>(null) }
     val mapSdkStartup = (context.applicationContext as GyeonggiSumgilApplication).mapSdkStartup
     if (mapSdkStartup !is MapSdkStartup.Ready) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("산책 경로 검증", style = MaterialTheme.typography.titleLarge)
+            PlaceDiscoveryPanel(requestedPlaceLabel.orEmpty(), confirmedPlace) { confirmedPlace = it }
             if (requestedPlaceLabel != null) Text("홈에서 선택한 장소: $requestedPlaceLabel")
             if (mapSdkStartup is MapSdkStartup.MissingKey) {
                 Text("카카오 네이티브 키가 설정되지 않았습니다.")
@@ -153,6 +156,12 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("산책 경로 검증", style = MaterialTheme.typography.titleLarge)
+        PlaceDiscoveryPanel(requestedPlaceLabel.orEmpty(), confirmedPlace) { place ->
+            confirmedPlace = place; selected = null; riverCandidates = emptyList(); generation = null; clearResult()
+            if (place != null) renderer.center(JSONArray(listOf(place.point.longitude, place.point.latitude)))
+            requestStatus = if (place == null) "시험 입력을 직접 선택하세요." else
+                "확인한 장소의 검증된 경로는 아직 연결되지 않았습니다. 다른 시험 장소로 자동 대체하지 않습니다."
+        }
         Text("실제 도보 API 경로 · 추천 승인 전 시험", color = MaterialTheme.colorScheme.primary)
         selected?.optJSONObject("request_scenario")?.let { scenario ->
             Text("요청: ${scenario.getString("requested_place")}에서 ${scenario.getInt("requested_park_distance_m")}m 산책")
@@ -170,7 +179,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { profileMenu = true }, enabled = !loading && profiles.isNotEmpty() && requestedPlaceLabel == null,
+                OutlinedButton(onClick = { profileMenu = true }, enabled = !loading && profiles.isNotEmpty() && requestedPlaceLabel == null && confirmedPlace == null,
                     modifier = Modifier.fillMaxWidth()) {
                     Text(selected?.getString("label") ?: "시험 입력 선택")
                 }
@@ -224,7 +233,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
                                 clearCandidates(); requestStatus = "후보 계산 실패 · 입력 시간·원본 보행로·서버 확인 필요"
                             } finally { loading = false }
                         }
-                    }, enabled = !loading && requestedPlaceLabel == null &&
+                    }, enabled = !loading && requestedPlaceLabel == null && confirmedPlace == null &&
                         durationText.toIntOrNull()?.let { it in 1..120 } == true,
                         modifier = Modifier.fillMaxWidth()) { Text("시간에 맞는 반환점 후보 계산") }
                     generation?.let { response ->
@@ -284,7 +293,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
                             clearResult(); requestStatus = "조회 또는 표시 실패 · 이전 경로 폐기. 호출 한도·네트워크·응답 확인 필요. 자동 재시도 없음."
                         } finally { loading = false }
                     }
-                }, enabled = !loading && mapReady && selected != null && requestedPlaceLabel == null &&
+                }, enabled = !loading && mapReady && selected != null && requestedPlaceLabel == null && confirmedPlace == null &&
                     (selected?.optString("shape") != "river_out_and_back" || selected?.optJSONObject("river_candidate") != null),
                     modifier = Modifier.fillMaxWidth()) { Text(if (loading) "확인 중" else "이 입력으로 실제 경로 조회 (1회)") }
             }

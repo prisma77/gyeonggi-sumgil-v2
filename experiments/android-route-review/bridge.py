@@ -16,6 +16,7 @@ import probe
 from audit_inputs import audit_inputs
 from plan_river_candidates import candidate_id, compare_distance, inspect_distance, inspect_target, plan
 from compare_candidates import compare, trial_summary
+from place_search import PlaceSearchService
 
 
 def scenario_conditions(site):
@@ -59,8 +60,9 @@ def load_catalog(path):
 
 
 class ReviewService:
-    def __init__(self, profiles, client):
+    def __init__(self, profiles, client, place_search=None):
         self.base_profiles, self.profiles, self.client = dict(profiles), dict(profiles), client
+        self.place_search = place_search
         self.trials = {}  # Metrics/decisions only: never store provider paths or responses.
         self.generated_ids = set()
 
@@ -76,7 +78,9 @@ class ReviewService:
         # Independent OSM inputs only. No routing requests, no Kakao response cache.
         return {"profiles": [self.profile(identifier, label, site)
                              for identifier, (label, site) in self.base_profiles.items()],
-                "calls_sent": self.client.calls, "call_limit": self.client.limit}
+                "calls_sent": self.client.calls, "call_limit": self.client.limit,
+                "place_calls_sent": self.place_search.client.calls if self.place_search else 0,
+                "place_call_limit": self.place_search.client.limit if self.place_search else 0}
 
     def candidates(self, request):
         required = {"id", "duration_minutes", "walking_speed_kmh"}
@@ -219,7 +223,7 @@ def make_handler(service):
             if not self.allowed():
                 self.reply(403, {"error": "LOCAL_CLIENT_REQUIRED"})
                 return
-            if self.path not in ("/route", "/river-candidates"):
+            if self.path not in ("/route", "/river-candidates", "/places"):
                 self.reply(404, {"error": "NOT_FOUND"})
                 return
             try:
@@ -227,7 +231,13 @@ def make_handler(service):
                 if not 1 <= size <= 1024 or self.headers.get("Content-Type") != "application/json":
                     raise ValueError("Invalid body")
                 request = json.loads(self.rfile.read(size))
-                self.reply(200, service.route(request) if self.path == "/route" else service.candidates(request))
+                if self.path == "/places":
+                    if service.place_search is None:
+                        raise RuntimeError("Place search unavailable")
+                    result = service.place_search.search(request)
+                else:
+                    result = service.route(request) if self.path == "/route" else service.candidates(request)
+                self.reply(200, result)
             except (ValueError, TypeError, KeyError, UnicodeError):
                 self.reply(400, {"error": "INVALID_REVIEW_REQUEST"})
             except (RuntimeError, OSError):
@@ -240,13 +250,15 @@ def main():
     parser.add_argument("--catalog", type=Path, default=Path(__file__).with_name("catalog.json"))
     parser.add_argument("--port", type=int, default=8769)
     parser.add_argument("--max-calls", type=int, default=6)
+    parser.add_argument("--max-search-calls", type=int, default=12)
     args = parser.parse_args()
-    if not 1 <= args.max_calls <= 20 or not 1024 <= args.port <= 65535:
+    if not 1 <= args.max_calls <= 20 or not 1 <= args.max_search_calls <= 30 or not 1024 <= args.port <= 65535:
         raise ValueError("Invalid limits")
     key = probe.read_key()
     if not key:
         raise ValueError("REST key missing")
-    service = ReviewService(load_catalog(args.catalog.resolve()), probe.Client(key, args.max_calls))
+    service = ReviewService(load_catalog(args.catalog.resolve()), probe.Client(key, args.max_calls),
+                            PlaceSearchService(probe.Client(key, args.max_search_calls)))
     server = HTTPServer(("127.0.0.1", args.port), make_handler(service))
     server.timeout = 1
     print(f"Loopback review bridge on port {args.port}; limit {args.max_calls}; no response persistence.", flush=True)

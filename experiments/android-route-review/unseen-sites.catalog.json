@@ -1,0 +1,4 @@
+[
+  {"id":"baegun-new","label":"백운호수 · 처음 시험 · 호숫가 입력 검증","site":"../kakao-walking/drafts/baegun.probe.json","source_file":"../kakao-walking/sources/baegun-walkways.osm.json"},
+  {"id":"osan-new","label":"오산천 · 처음 시험 · 2~3km 왕복","site":"../kakao-walking/drafts/osan.probe.json","source_file":"../kakao-walking/sources/osan-walkways.osm.json"}
+]
