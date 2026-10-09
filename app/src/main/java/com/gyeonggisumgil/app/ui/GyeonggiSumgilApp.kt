@@ -1385,6 +1385,7 @@ private fun ChatScreen(
                 modifier = Modifier.fillMaxWidth(0.96f)
             )
         }
+        AiIntentReviewPanel()
         chatMessages.forEach { chatMessage ->
             ChatBubble(
                 title = chatMessage.title,
