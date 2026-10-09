@@ -90,12 +90,28 @@ class SelectedNetworkTests(unittest.TestCase):
     def test_three_km_lake_not_extended_with_repetitions(self):
         result = self.acquired()
         sites, meta = self.service.candidates(dict(place_id=self.place['id'], target_id=result['targets'][0]['id'], distance_m=3000))
-        self.assertEqual([], sites)
-        self.assertEqual('SOURCE_LAP_DISTANCE_MISMATCH', meta['status'])
+        self.assertTrue(sites)
+        self.assertEqual('SOURCE_CANDIDATES_ONLY', meta['status'])
+        self.assertIn('NOT_EXHAUSTIVE',meta['cycle_search']['method'])
+        self.assertEqual(0,meta['routing_calls_sent'])
+        raw_coords, raw_edges, _ = network(self.source)
+        for site in sites:
+            ids = site['source_node_ids']
+            self.assertTrue(2700 <= site['source_network_length_m'] <= 3300)
+            self.assertEqual(len(ids)-1,len(set(ids[:-1])))
+            self.assertTrue(all(edge in raw_edges for edge in zip(ids,ids[1:])))
+            self.assertTrue(all(raw_coords[n] == p for n,p in zip(ids,site['reference_walkway'])))
+
+    def test_unavailable_distance_still_has_no_repeated_padding(self):
+        result = self.acquired()
+        sites, meta = self.service.candidates(dict(place_id=self.place['id'],target_id=result['targets'][0]['id'],distance_m=5000))
+        self.assertEqual([],sites)
+        self.assertIn(meta['status'],('SOURCE_CYCLE_DISTANCE_NOT_FOUND','SOURCE_CYCLE_SEARCH_LIMIT_REACHED'))
+        self.assertEqual(0,meta['routing_calls_sent'])
 
     def test_invalid_distance_and_changed_place_are_rejected(self):
         result = self.acquired(); req = dict(place_id=self.place['id'], target_id=result['targets'][0]['id'], distance_m=None)
-        for value in [True, float('nan'), 499, 5001, '3000']:
+        for value in [True, float('nan'), 1999, 20001, '3000']:
             with self.assertRaises(ValueError): self.service.candidates(dict(req, distance_m=value))
         self.places.place = dict(self.place, name='Another park')
         with self.assertRaises(ValueError): self.service.candidates(req)
@@ -141,7 +157,7 @@ class SelectedNetworkTests(unittest.TestCase):
         client = FakeClient(response([[(127, 37), (127.001, 37)]]))
         service = ReviewService(load_catalog(Path(__file__).with_name('catalog.json')), client, self.places, self.provider)
         acquired = service.acquire_place(dict(place_id=self.place['id'], shape='lake_loop'))
-        generated = service.place_candidates(dict(place_id=self.place['id'], target_id=acquired['targets'][0]['id'], distance_m=1850))
+        generated = service.place_candidates(dict(place_id=self.place['id'], target_id=acquired['targets'][0]['id'], distance_m=2200))
         profile = generated['candidates'][0]
         site = service.profiles[profile['id']][1]
         # Synthetic provider follows the exact sourced cycle but deliberately reports wrong distance.
@@ -156,24 +172,24 @@ class SelectedNetworkTests(unittest.TestCase):
         self.assertEqual(1, client.calls)
 
     def test_river_oneway_barrier_or_conditional_access_cannot_be_returned(self):
-        coords = [[127+i*.0001, 37] for i in range(101)]
-        nodes = list(range(101))
+        coords = [[127+i*.0001, 37] for i in range(151)]
+        nodes = list(range(151))
         footway = dict(type='way', id=1, nodes=nodes, geometry=[dict(lon=x, lat=y) for x,y in coords], tags={'highway':'footway'})
-        river = dict(type='way', id=2, nodes=[201,202], geometry=[dict(lon=127,lat=36.9998), dict(lon=127.01,lat=36.9998)],
+        river = dict(type='way', id=2, nodes=[201,202], geometry=[dict(lon=127,lat=36.9998), dict(lon=127.015,lat=36.9998)],
                      tags={'waterway':'stream','name':'시험하천'})
         source = dict(source=dict(url='https://example.org/source',retrieved_at='2026-10-09T00:00:00Z',license='ODbL 1.0'),
                       osm=dict(elements=[footway,river]))
         place = dict(id='river',name='시험하천',x=127,y=37)
         target = targets(source,place,'river_out_and_back')[0]
-        _, sites, _ = build_candidates(source,target,place,'river_out_and_back',1000)
+        _, sites, _ = build_candidates(source,target,place,'river_out_and_back',2000)
         self.assertTrue(sites)
         for tags in [{'oneway:foot':'yes'}, {'foot:conditional':'no @ (night)'}]:
             restricted = copy.deepcopy(source);restricted['osm']['elements'][0]['tags'].update(tags)
-            _, sites, _ = build_candidates(restricted,target,place,'river_out_and_back',1000)
+            _, sites, _ = build_candidates(restricted,target,place,'river_out_and_back',2000)
             self.assertEqual([],sites)
         restricted = copy.deepcopy(source)
         restricted['osm']['elements'].append(dict(type='node',id=20,lon=coords[20][0],lat=37,tags={'barrier':'gate'}))
-        _, sites, _ = build_candidates(restricted,target,place,'river_out_and_back',1000)
+        _, sites, _ = build_candidates(restricted,target,place,'river_out_and_back',2000)
         self.assertEqual([],sites)
 
     def test_old_generated_profile_is_revoked_before_acquiring_another_source(self):

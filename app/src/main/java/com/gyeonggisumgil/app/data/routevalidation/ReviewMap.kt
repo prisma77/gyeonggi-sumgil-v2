@@ -119,9 +119,11 @@ class ReviewMap(context: Context) {
         val labelLayer = requireNotNull(requireNotNull(kakaoMap.labelManager).layer)
         val failed = response.getJSONObject("inspection").optJSONArray("failures")?.length() ?: 0
         // The SDK reuses registered style IDs even after the layer's lines are removed.
-        val styleId = if (failed > 0) "api-response-failed" else "api-response-unapproved"
+        val passed = response.getJSONObject("inspection").optString("geometry_check") == "PASS"
+        val styleId = if (failed > 0) "api-response-failed" else if (passed) "api-response-passed" else "api-response-review"
         val styles = RouteLineStylesSet.from(styleId,
-            RouteLineStyles.from(RouteLineStyle.from(8f, if (failed > 0) Color.rgb(190, 58, 40) else Color.rgb(25, 92, 202))))
+            RouteLineStyles.from(RouteLineStyle.from(8f, if (failed > 0) Color.rgb(190, 58, 40)
+                else if (passed) Color.rgb(25, 92, 202) else Color.rgb(190, 145, 0))))
         val paths = response.getJSONArray("paths")
         val fitPoints = mutableListOf<LatLng>()
         for (index in 0 until paths.length()) {

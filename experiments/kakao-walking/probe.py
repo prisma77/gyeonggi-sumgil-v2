@@ -221,12 +221,24 @@ def inspect(payload: dict, start: Point, end: Point, shape: str = "point_to_poin
         if shape in ("lake_loop", "river_out_and_back") and meters(path[0], path[-1]) > 30:
             failures.append("RETURN_NOT_CLOSED")
         if reference or reference_segments or shape != "point_to_point":
+            source_check = None
+            if shape == 'lake_loop' and source is not None:
+                from source_route_evidence import inspect_source_network
+                source_check = inspect_source_network(paths, source, tolerance)
+                result['source_network_validation'] = source_check
+                failures.extend(source_check['failures'])
+                unknowns.extend(source_check['unresolved'])
             if reference_segments or reference and len(reference) >= 2:
                 # Per-step measurement excludes discontinuities from invented connectors.
                 coverage = sum(corridor_coverage(p, reference or [], tolerance, reference_segments) * sum(meters(a, b) for a, b in zip(p, p[1:])) for p in paths) / geometric_distance if geometric_distance else 0
                 result["reference_coverage"] = round(coverage, 4)
+                result['reference_course_check'] = 'MATCHED' if coverage >= .9 else 'CHANGED'
                 if coverage < 0.9:
-                    failures.append("OUTSIDE_REFERENCE_WALKWAY")
+                    if source_check:
+                        result.setdefault('notes', []).append('ALTERNATE_SOURCE_WALKWAY_USED' if source_check['status'] == 'PASS_SOURCE_GEOMETRY_ONLY'
+                                                             else 'REFERENCE_COURSE_CHANGED_SOURCE_NETWORK_UNRESOLVED')
+                    else:
+                        failures.append("OUTSIDE_REFERENCE_WALKWAY")
             else:
                 unknowns.append("REFERENCE_WALKWAY_MISSING")
         if shape == "lake_loop":
@@ -254,6 +266,7 @@ def inspect(payload: dict, start: Point, end: Point, shape: str = "point_to_poin
                 evidence = inspect_water_overlap(paths, water, source)
                 result['water_overlap_evidence'] = evidence
                 unknowns.extend(evidence['unresolved'])
+                result.setdefault('notes', []).extend(evidence.get('notes', []))
         if shape == "river_out_and_back":
             from validate_river import inspect_river
             river = inspect_river(paths, reference or [])
@@ -335,6 +348,11 @@ def load_site(path: Path) -> dict:
 def routing_inputs(site):
     """One reviewed request; generated river candidates may need fewer than five vias."""
     points = [point(p) for p in site["walk_points"]]
+    if 'lake_route_parts' in site:
+        if (site['shape'] != 'lake_loop' or len(points) != 12 or len(set(points)) != 12 or
+                site['lake_route_parts'] != [[0,1,2,3,4,5,6],[6,7,8,9,10,11,0]]):
+            raise ValueError('Two explicit source-node requests, at most five vias per request required')
+        return points[0],points[0],points[1:],'lake_loop'
     if "river_candidate" in site:
         indices = site.get("selected_via_indices")
         if (site["shape"] != "river_out_and_back" or not 2 <= len(points) <= 200 or

@@ -18,6 +18,7 @@ from plan_river_candidates import candidate_id, compare_distance, inspect_distan
 from compare_candidates import compare, trial_summary
 from place_search import PlaceSearchService
 from selected_network import SelectedNetwork, OverpassSource
+from walk_plan_policy import inspect_walk_plan
 import secrets
 import time
 
@@ -73,6 +74,10 @@ class ReviewService:
     @staticmethod
     def profile(identifier, label, site):
         return dict(id=identifier, label=label, name=site["name"], shape=site["shape"],
+                    cycle_search=site.get('cycle_search'),
+                    route_request_count=site.get('route_request_count',1),
+                    cycle_anchor_selection=site.get('cycle_anchor_selection'),
+                    walk_plan=site.get('walk_plan'),
                     source=site["walk_source"], input_change=site.get("input_change"),
                     input_validation=site["input_validation"], start=site["walk_points"][0],
                     request_scenario=scenario_conditions(site),
@@ -96,6 +101,9 @@ class ReviewService:
             identifier = 'selected-' + secrets.token_hex(10)
             length = (site.get('river_candidate') or {}).get('source_expected_roundtrip_m', site['source_network_length_m'])
             label = f"{site['name']} · 원본 후보 {i+1} · {length:.0f}m"
+            walk_plan = site.get('walk_plan')
+            if walk_plan and walk_plan['lap_count']>1:
+                label = f"{site['name']} · 원본 {length:.0f}m × {walk_plan['lap_count']}바퀴 · 총 {walk_plan['source_total_distance_m']:.0f}m 예상"
             self.profiles[identifier] = label, site
             item = self.profile(identifier, label, site)
             item.update(selected_place_id=site['selected_place_id'], source_distance_m=length,
@@ -162,11 +170,33 @@ class ReviewService:
             raise ValueError("Source input validation failed; no routing request sent")
         scenario = scenario_conditions(site)
         start, end, via, shape = probe.routing_inputs(site)
-        params = dict(start_x=start[0], start_y=start[1], end_x=end[0], end_y=end[1],
-                      input_coord="WGS84", output_coord="WGS84", route_mode=mode,
-                      via_x=",".join(str(p[0]) for p in via),
-                      via_y=",".join(str(p[1]) for p in via))
-        status, payload, elapsed = self.client.get("/v2/routing/walk", params)
+        parts = [[start,*via,end]]
+        if 'lake_route_parts' in site:
+            points = site['walk_points']
+            parts = [[points[i] for i in indices] for indices in site['lake_route_parts']]
+        if self.client.limit-self.client.calls < len(parts):
+            raise RuntimeError('Entire explicit route request budget required; no partial routing')
+        responses, elapsed = [], 0.0
+        for part in parts:
+            params = dict(start_x=part[0][0],start_y=part[0][1],end_x=part[-1][0],end_y=part[-1][1],
+                          input_coord='WGS84',output_coord='WGS84',route_mode=mode,
+                          via_x=','.join(str(p[0]) for p in part[1:-1]),
+                          via_y=','.join(str(p[1]) for p in part[1:-1]))
+            status,payload,seconds = self.client.get('/v2/routing/walk',params)
+            elapsed += seconds
+            responses.append((status,payload))
+            if status != 200 or payload.get('status') != 'OK':
+                break  # No retries and no partial result presented as a completed cycle.
+        if len(parts)>1 and len(responses)==len(parts) and all(s==200 and p.get('status')=='OK' for s,p in responses):
+            try:
+                payload = dict(status='OK',route=dict(
+                    legs=[leg for _,p in responses for leg in p['route']['legs']],
+                    properties=dict(totalDistance=sum(p['route']['properties']['totalDistance'] for _,p in responses),
+                                    totalTime=sum(p['route']['properties']['totalTime'] for _,p in responses))))
+            except (KeyError,TypeError):
+                payload = {'status':'INVALID_COMPOSITE_RESPONSE'}
+        elif len(parts)>1:
+            payload = {'status':'COMPOSITE_ROUTE_INCOMPLETE'}
         result = probe.inspect(payload, start, end, shape, site["reference_walkway"],
                                site["water_boundary"], 20, site["reference_segments"], via, site.get('_source_data'))
         candidate = site.get("river_candidate")
@@ -186,6 +216,9 @@ class ReviewService:
             result.setdefault("failures", []).extend(target["failures"])
             if target["failures"]:
                 result["geometry_check"] = "FAIL"
+        if site.get('walk_plan'):
+            # Base geometry is inspected once. Planned repetitions never repair its defects.
+            result['walk_plan_validation'] = inspect_walk_plan(result,site['walk_plan'])
         if candidate:
             comparison = compare_distance(result, candidate)
             result["source_distance_comparison"] = comparison
@@ -208,6 +241,8 @@ class ReviewService:
             except (KeyError, TypeError, ValueError):
                 paths = []
         return dict(id=identifier, mode=mode, shape=shape, http_status=status, inspection=result,
+                    route_request_count=len(parts), completed_request_count=sum(s==200 and p.get('status')=='OK' for s,p in responses),
+                    walk_plan=site.get('walk_plan'),
                     paths=paths, start=start, end=end, via=via,
                     source=site["walk_source"], water_source=site.get("water_source"),
                     input_validation=site["input_validation"],

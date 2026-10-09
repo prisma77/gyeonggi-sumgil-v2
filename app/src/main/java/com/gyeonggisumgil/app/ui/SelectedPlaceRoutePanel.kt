@@ -37,30 +37,43 @@ internal fun SelectedPlaceRoutePanel(
     val scope = rememberCoroutineScope()
     var shape by remember { mutableStateOf("lake_loop") }
     var distanceText by remember { mutableStateOf("") }
+    var allowRepeatedLaps by remember { mutableStateOf(false) }
     var network by remember { mutableStateOf<JSONObject?>(null) }
     var target by remember { mutableStateOf<JSONObject?>(null) }
     var candidates by remember { mutableStateOf(emptyList<JSONObject>()) }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf("선택한 장소의 보행망을 확보한 뒤 지도에서 수역·하천 대상을 확인하세요.") }
     val distance = distanceText.toIntOrNull()
-    val validDistance = if (distanceText.isBlank()) shape == "lake_loop" else distance?.let { it in 500..5000 } == true
+    val validDistance = if (distanceText.isBlank()) shape == "lake_loop" else distance?.let { it in 2000..20000 } == true
 
     fun clearCandidates() { candidates = emptyList(); selectedId = null; onClear() }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("선택 장소 경로 만들기", style = MaterialTheme.typography.titleMedium)
             Text("호수 순환·하천 왕복 시험입니다. 일반 공원의 임의 순환은 아직 지원하지 않습니다.")
-            listOf("lake_loop" to "호수 한 바퀴", "river_out_and_back" to "하천 왕복").forEach { (value, title) ->
+            listOf("lake_loop" to "호수 순환", "river_out_and_back" to "하천 왕복").forEach { (value, title) ->
                 OutlinedButton(onClick = {
-                    shape = value; network = null; target = null; clearCandidates()
+                    shape = value; allowRepeatedLaps = false; network = null; target = null; clearCandidates()
                     status = "경로 조건을 바꿨습니다. 선택한 장소의 보행망을 다시 확보하세요."
                 }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("${if (shape == value) "✓ " else ""}$title") }
             }
-            OutlinedTextField(distanceText, onValueChange = { distanceText = it; clearCandidates() },
+            OutlinedTextField(distanceText, onValueChange = {
+                distanceText = it; clearCandidates()
+                status = if (it.isBlank() && shape == "lake_loop") "거리 없이 한 바퀴를 검사합니다. 확인한 대상으로 후보를 다시 계산하세요."
+                else if (it.toIntOrNull()?.let { value -> value in 2000..20000 } == true)
+                    "총거리 조건을 바꿨습니다. 확인한 대상으로 후보를 다시 계산하세요."
+                else "총 목표 거리는 2000~20000m를 입력하세요."
+            },
                 label = { Text(if (shape == "lake_loop") "목표 거리(m) · 비우면 한 바퀴" else "왕복 목표 거리(m) · 입력 필요") },
                 singleLine = true, enabled = !busy, isError = !validDistance, modifier = Modifier.fillMaxWidth())
-            Text("입력한 거리의 ±10%를 검사합니다. 집↔장소 접근은 제외하고 원본 보행 노드에서 출발합니다. 한 바퀴는 기본 거리로 변환하지 않습니다.",
+            Text("총 목표 2~20km를 입력할 수 있습니다. 목표 ±10%와 최소 총 2km를 함께 검사합니다. 집↔장소 접근은 제외합니다. 거리를 비우면 한 바퀴이며, 2km 미만이라도 바퀴 수를 자동으로 늘리지 않습니다.",
                 style = MaterialTheme.typography.bodySmall)
+            if (shape == "lake_loop") OutlinedButton(onClick = {
+                allowRepeatedLaps = !allowRepeatedLaps; clearCandidates()
+                status = "반복 대안 ${if (allowRepeatedLaps) "포함" else "제외"}으로 바꿨습니다. 확인한 대상으로 후보를 다시 계산하세요."
+            }, enabled = !busy && !distanceText.isBlank(), modifier = Modifier.fillMaxWidth()) {
+                Text("${if (allowRepeatedLaps) "✓ " else ""}한 바퀴로 부족하면 반복 순환 대안 포함")
+            }
             Button(onClick = {
                 clearCandidates(); network = null; target = null; onBusy(true)
                 status = "선택 장소 주변 OSM 보행망 확보 중 · 도보 API 호출 없음"
@@ -101,18 +114,28 @@ internal fun SelectedPlaceRoutePanel(
                     scope.launch {
                         try {
                             val response = withContext(Dispatchers.IO) {
-                                gateway.selectedCandidates(place.id, confirmed.getString("id"), distance)
+                                gateway.selectedCandidates(place.id, confirmed.getString("id"), distance,allowRepeatedLaps && distance != null)
                             }
                             check(response.getString("place_id") == place.id && response.getInt("routing_calls_sent") == 0)
                             check(response.getString("recommendation_quality") == "NOT_ACCEPTED")
                             val list = response.getJSONArray("candidates")
                             candidates = (0 until list.length()).map { list.getJSONObject(it) }
                             status = if (candidates.isEmpty()) when (response.getString("status")) {
+                                "SOURCE_CYCLE_SEARCH_LIMIT_REACHED" -> "제한된 순환 탐색에서 목표 후보를 확보하지 못했습니다. 탐색 한도에 도달했으며 코스가 없다는 뜻은 아닙니다."
+                                "SOURCE_CYCLE_DISTANCE_NOT_FOUND" -> "탐색한 원본 순환선 중 목표 거리에 맞는 후보가 없습니다. 다른 코스의 존재 여부는 미확정입니다."
                                 "SOURCE_LAP_DISTANCE_MISMATCH" -> "확보한 한 바퀴 길이가 목표 거리 범위에 맞지 않습니다. 반복이나 우회를 덧붙이지 않았습니다."
                                 "NO_COMPLETE_ENCLOSING_SOURCE_CYCLE" -> "전체 수역을 둘러싸는 연결된 보행 순환을 찾지 못했습니다. 끊어진 길을 연결하지 않았습니다."
                                 "SOURCE_ROUNDTRIP_DISTANCE_UNAVAILABLE" -> "연결된 동일 길 왕복으로 목표 거리를 확보하지 못했습니다."
                                 else -> "원본 보행망의 출발점·연결·입력 조건을 만족하는 후보가 없습니다."
-                            } else "원본 후보 ${candidates.size}개입니다. 후보를 선택한 뒤 아래 실제 경로 조회로 검증하세요. 현재 통행·추천은 미승인입니다."
+                            } else "원본 후보 ${candidates.size}개입니다. 후보를 선택한 뒤 아래 실제 경로 조회로 검증하세요. 현재 통행은 미확인입니다."
+                            response.optJSONObject("cycle_search")?.let { search ->
+                                status += "\n순환 탐색 ${search.getInt("attempts")}/${search.getInt("attempt_limit")}회 · 서로 다른 원본 순환 ${search.getInt("distinct_cycles_examined")}개 대조" +
+                                    if (search.optBoolean("limit_reached")) " · 탐색 한도 도달" else " · 제한된 탐색 결과"
+                            }
+                            response.optJSONObject("lap_search")?.let { search ->
+                                val counts = search.optJSONArray("examined_lap_counts")
+                                if (counts != null && counts.length()>1) status += "\n반복 대안은 원본 한 바퀴에 횟수를 붙인 계획입니다. 실제 한 바퀴 검증 전에는 추천 보류입니다."
+                            }
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (_: Exception) { status = "후보 검사 실패 · 거리·선택 대상·유효기간·서버 확인 필요" }
                         finally { onBusy(false) }
@@ -123,10 +146,10 @@ internal fun SelectedPlaceRoutePanel(
                 OutlinedButton(onClick = {
                     selectedId = profile.getString("id"); onCandidate(profile)
                 }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                    Text("${if (selectedId == profile.getString("id")) "✓ " else ""}${profile.getString("label")}")
+                    Text("${if (selectedId == profile.getString("id")) "✓ " else ""}${profile.getString("label")} · API ${profile.optInt("route_request_count",1)}회")
                 }
             }
-            if (candidates.isNotEmpty()) Text("원본 노드·연결·형상을 자동 검사한 후보입니다. 실제 보행 경로·현재 통행은 별도 검사이며 POI에서 출발점까지 접근 경로는 포함하지 않습니다.",
+            if (candidates.isNotEmpty()) Text("원본 보행망 후보이며 공원 경계 내부·현재 통행은 별도 확인이 필요합니다. API 2회 후보는 원본 지점에서 나눠 요청하며 요청당 경유점은 최대 5개입니다. 조회 수만큼 요금·쿼터가 적용됩니다. POI에서 출발점까지 접근 경로는 포함하지 않습니다.",
                 style = MaterialTheme.typography.bodySmall)
         }
     }

@@ -34,6 +34,50 @@ class BridgeTests(unittest.TestCase):
         self.client = FakeClient(response([points, list(reversed(points))]))
         self.service = ReviewService(self.catalog, self.client)
 
+    def split_site(self):
+        from test_source_cycle import fixture
+        from plan_source_cycle import plan_multiple
+        data=fixture();site=plan_multiple(data,99,0,200)['candidates'][0]
+        from prepare_site import network
+        coords,_,_=network(data)
+        ids=list(range(12))
+        site.update(sample_node_ids=ids,walk_points=[coords[n] for n in ids],
+                    lake_route_parts=[[0,1,2,3,4,5,6],[6,7,8,9,10,11,0]],
+                    input_validation={'failures':[]},_source_data=data,route_request_count=2)
+        self.service.profiles['split']=('Synthetic split request',site)
+        return site
+
+    def test_split_budget_reserved_before_any_provider_call(self):
+        self.split_site()
+        with self.assertRaises(RuntimeError):self.service.route({'id':'split','mode':'SHORTEST'})
+        self.assertEqual(0,self.client.calls)
+
+    def test_two_request_sum_and_original_steps_with_five_vias_each(self):
+        self.split_site();self.client.limit=2
+        captured=[]
+        def get(endpoint,params):
+            captured.append(params);self.client.calls+=1
+            start=(params['start_x'],params['start_y']);end=(params['end_x'],params['end_y'])
+            return 200,response([[start,end]]),.1
+        self.client.get=get
+        result=self.service.route({'id':'split','mode':'SHORTEST'})
+        self.assertEqual(2,result['route_request_count']);self.assertEqual(2,self.client.calls)
+        self.assertEqual(2,len(result['paths']))
+        self.assertEqual(result['paths'][0][-1],result['paths'][1][0])
+        self.assertTrue(all(len(p['via_x'].split(','))==5 for p in captured))
+        self.assertEqual(11,len(result['via']))
+        self.assertAlmostEqual(sum(probe.meters(*p) for p in result['paths']),result['inspection']['distance_m'],places=1)
+
+    def test_failed_second_request_discards_partial_paths(self):
+        self.split_site();self.client.limit=2
+        def get(endpoint,params):
+            self.client.calls+=1
+            return (200,self.client.payload,.1) if self.client.calls==1 else (503,{'status':'ERROR'},.1)
+        self.client.get=get
+        result=self.service.route({'id':'split','mode':'SHORTEST'})
+        self.assertEqual([],result['paths']);self.assertEqual(2,self.client.calls)
+        self.assertEqual('NOT_EVALUATED',result['inspection']['geometry_check'])
+
     def test_catalog_is_not_a_paid_route_lookup(self):
         data = self.service.catalog()
         self.assertEqual(8, len(data["profiles"]))

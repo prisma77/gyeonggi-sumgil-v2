@@ -10,12 +10,13 @@ from urllib.request import Request, urlopen
 import json
 
 from prepare_site import network, eligible
-from plan_source_cycle import plan as lake_plan
+from plan_source_cycle import plan_multiple as lake_plan_multiple
 from source_water import outer_boundary
 from probe import point, meters, segment_distance, inside
 from select_network_anchors import select_network_anchors
 from validate_lap import projected, intersection
 from audit_inputs import audit_inputs
+from walk_plan_policy import MIN_WALK_DISTANCE_M, MAX_TARGET_DISTANCE_M, MAX_LAPS, distance_bounds, make_walk_plan
 
 ENDPOINT = "https://overpass-api.de/api/interpreter"
 
@@ -150,7 +151,50 @@ def restricted_source(source, target, shape):
     return result
 
 
-def build_candidates(source, target, place, shape, distance_m):
+def lake_walk_options(source, target, start, distance_m, allow_repeated_laps):
+    """Explicit repeat alternatives share one unmodified base-lap graph and a total budget."""
+    repeat_enabled = allow_repeated_laps and distance_m is not None
+    time_limit = 20 if repeat_enabled else 10
+    deadline = time.monotonic()+time_limit
+    searches, options = [], []
+    counts = range(1,MAX_LAPS+1) if repeat_enabled else (1,)
+    limited = False
+    status = 'NO_COMPLETE_ENCLOSING_SOURCE_CYCLE'
+    for count in counts:
+        remaining = deadline-time.monotonic()
+        if remaining <= 0:
+            limited = True
+            break
+        base_target = distance_m/count if distance_m is not None else None
+        try:
+            planned = lake_plan_multiple(source,target['osm_id'] if target['kind']=='way' else None,start,base_target,
+                         water_relation_id=target['osm_id'] if target['kind']=='relation' else None,
+                         max_seconds=min(6 if repeat_enabled else 10,remaining))
+        except (ValueError,KeyError,TypeError):
+            continue
+        searches.append(dict(lap_count=count,search=planned['search'],status=planned['status']))
+        limited |= planned['search']['limit_reached']
+        status = planned['status']
+        for site in planned['candidates']:
+            length = site['source_network_length_m']
+            if distance_m is not None and not distance_bounds(distance_m)[0] <= length*count <= distance_bounds(distance_m)[1]:
+                continue
+            site['walk_plan'] = make_walk_plan(distance_m,count,length)
+            site['distance_conditions'] = dict(distance_range_m=distance_bounds(distance_m,count) if distance_m is not None else None)
+            options.append(site)
+        # A valid one-lap proposal has priority; repeated alternatives never replace it silently.
+        if (count==1 and options) or len(options)>=6:
+            break
+    options.sort(key=lambda site: (abs(site['walk_plan']['source_total_distance_m']-distance_m)
+                                  if distance_m is not None else site['source_network_length_m'],site['walk_plan']['lap_count']))
+    return dict(candidates=options[:3],search=searches[0]['search'] if searches else None,
+                lap_search=dict(allow_repeated_laps=repeat_enabled,total_time_limit_seconds=time_limit,
+                                examined_lap_counts=[s['lap_count'] for s in searches],limit_reached=limited,
+                                searches=searches),
+                status='SOURCE_CANDIDATES_ONLY' if options else 'SOURCE_CYCLE_SEARCH_LIMIT_REACHED' if limited else status)
+
+
+def build_candidates(source, target, place, shape, distance_m, allow_repeated_laps=False):
     coords, edges, _ = network(source)
     segments = sum(max(0, len(p)-1) for p in target['paths'])
     if not segments or segments > 1500 or len(edges)*segments > 4_000_000:
@@ -163,16 +207,17 @@ def build_candidates(source, target, place, shape, distance_m):
     start = min(coords, key=lambda n: meters(centre, coords[n]))
     if meters(centre, coords[start]) > 500:
         return source, [], 'NO_NEARBY_SOURCE_ENTRY'
-    bounds = [distance_m * .9, distance_m * 1.1] if distance_m is not None else None
+    bounds = distance_bounds(distance_m) if distance_m is not None else None
     if shape == 'lake_loop':
         try:
-            site = lake_plan(source, target['osm_id'] if target['kind'] == 'way' else None, start,
-                             water_relation_id=target['osm_id'] if target['kind'] == 'relation' else None)
+            planned = lake_walk_options(source,target,start,distance_m,allow_repeated_laps)
         except (ValueError, KeyError, TypeError):
             return source, [], 'NO_COMPLETE_ENCLOSING_SOURCE_CYCLE'
-        if bounds and not bounds[0] <= site['source_network_length_m'] <= bounds[1]:
-            return source, [], 'SOURCE_LAP_DISTANCE_MISMATCH'
-        sites = [site]
+        source['cycle_search'] = planned['search']
+        source['lap_search'] = planned['lap_search']
+        sites = [site for site in planned['candidates'] if meters(centre,site['walk_points'][0]) <= 500]
+        if not sites:
+            return source, [], planned['status'] if not planned['candidates'] else 'NO_NEARBY_SOURCE_ENTRY'
     else:
         adjacency = {}
         for a, b in edges:
@@ -224,11 +269,13 @@ def build_candidates(source, target, place, shape, distance_m):
             return source, [], 'SOURCE_ROUNDTRIP_DISTANCE_UNAVAILABLE'
     accepted = []
     for site in sites:
-        site.update(name=place['name'], distance_conditions=dict(distance_range_m=bounds),
+        site.update(name=place['name'],
                     selected_place_id=place['id'], selected_place_name=place['name'],
                     confirmed_target=dict(kind=target['kind'], osm_id=target['osm_id'], match=target['match']),
                     departure_scope='SOURCE_WALK_NODE; USER_HOME_ACCESS_NOT_INCLUDED',
                     input_review_policy='AUTOMATED_SOURCE_AUDIT_ONLY; CURRENT_ACCESS_UNVERIFIED')
+        if shape!='lake_loop':
+            site['distance_conditions'] = dict(distance_range_m=bounds)
         site['input_validation'] = audit_inputs(site, source)
         if not site['input_validation']['failures']:
             site['walk_points_reviewed'] = True
@@ -273,7 +320,8 @@ class SelectedNetwork:
         return data
 
     def candidates(self, request):
-        if not isinstance(request, dict) or set(request) != {'place_id', 'target_id', 'distance_m'}:
+        required = {'place_id','target_id','distance_m'}
+        if not isinstance(request, dict) or not required <= set(request) or set(request)-required-{'allow_repeated_laps'}:
             raise ValueError('Confirmed target and explicit distance state required')
         data = self.ensure_current(request['place_id'])
         place = data['place']
@@ -281,12 +329,17 @@ class SelectedNetwork:
         if target is None:
             raise ValueError('Explicit target confirmation required')
         distance = request['distance_m']
-        if distance is not None and (type(distance) not in (int, float) or not math.isfinite(distance) or not 500 <= distance <= 5000):
-            raise ValueError('Distance 500..5000m required')
+        if distance is not None and (type(distance) not in (int, float) or not math.isfinite(distance) or not MIN_WALK_DISTANCE_M <= distance <= MAX_TARGET_DISTANCE_M):
+            raise ValueError('Total distance 2000..20000m required')
+        repeats = request.get('allow_repeated_laps',False)
+        if type(repeats) is not bool or repeats and data['shape']!='lake_loop':
+            raise ValueError('Explicit lake repeat option required')
         if data['shape'] == 'river_out_and_back' and distance is None:
             raise ValueError('River distance required; never replace one lap with default distance')
-        source, sites, status = build_candidates(data['source'], target, place, data['shape'], distance)
+        source, sites, status = build_candidates(data['source'], target, place, data['shape'], distance,repeats)
         for site in sites:
             site['selected_source_id'] = data['id']
         return sites, dict(place_id=place['id'], status=status, source=source['source'], candidates=[],
+                           cycle_search=source.get('cycle_search'),
+                           lap_search=source.get('lap_search'),
                            distance_m=distance, routing_calls_sent=0, recommendation_quality='NOT_ACCEPTED')

@@ -12,14 +12,15 @@ interface ReviewGateway {
     fun riverCandidates(id: String, durationMinutes: Int, walkingSpeedKmh: Double): JSONObject
     fun route(id: String, mode: String): JSONObject
     fun selectedNetwork(placeId: String, shape: String): JSONObject
-    fun selectedCandidates(placeId: String, targetId: String, distanceMeters: Int?): JSONObject
+    fun selectedCandidates(placeId: String, targetId: String, distanceMeters: Int?, allowRepeatedLaps: Boolean = false): JSONObject
 }
 
 class LocalReviewGateway : ReviewGateway {
     override fun selectedNetwork(placeId: String, shape: String) = request("/place-network",
         JSONObject().put("place_id", placeId).put("shape", shape))
-    override fun selectedCandidates(placeId: String, targetId: String, distanceMeters: Int?) = request("/place-candidates",
-        JSONObject().put("place_id", placeId).put("target_id", targetId).put("distance_m", distanceMeters ?: JSONObject.NULL))
+    override fun selectedCandidates(placeId: String, targetId: String, distanceMeters: Int?, allowRepeatedLaps: Boolean) = request("/place-candidates",
+        JSONObject().put("place_id", placeId).put("target_id", targetId).put("distance_m", distanceMeters ?: JSONObject.NULL)
+            .put("allow_repeated_laps",allowRepeatedLaps))
     override fun profiles() = request("/profiles", null)
     override fun riverCandidates(id: String, durationMinutes: Int, walkingSpeedKmh: Double) =
         request("/river-candidates", JSONObject().put("id", id)
