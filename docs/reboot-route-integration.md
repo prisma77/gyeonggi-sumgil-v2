@@ -31,6 +31,8 @@ KAKAO_REST_API_KEY=PC 검증 서버에서만 사용할 REST 키
 
 대기질·날씨의 기존 `AIRKOREA_SERVICE_KEY`, `KMA_SERVICE_KEY`,
 역지오코딩용 `TMAP_APP_KEY`, 상담용 `GEMINI_API_KEY` 설정은 유지한다.
+Gemini 기본 모델은 `gemini-3.8-flash`이며 `local.properties`의 `GEMINI_MODEL`로 바꿀 수 있다(재빌드 필요).
+요청 해석의 실제 API 실험 결과와 수동 실행은 [Gemini 요청 해석 실험](gemini-intent-probe.md)을 참고한다.
 REST 키는 Android BuildConfig에 넣지 않는다.
 
 카카오 설정에 사용하는 Android 패키지는 `com.gyeonggisumgil.app`이다.

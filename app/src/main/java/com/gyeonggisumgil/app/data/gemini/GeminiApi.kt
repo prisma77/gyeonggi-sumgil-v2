@@ -3,6 +3,7 @@ package com.gyeonggisumgil.app.data.gemini
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.gyeonggisumgil.app.BuildConfig
 import com.gyeonggisumgil.app.data.ai.AiPromptTemplates
 import com.gyeonggisumgil.app.domain.model.GeoPoint
 import okhttp3.MediaType.Companion.toMediaType
@@ -20,8 +21,6 @@ class GeminiApi(
         return generateText(
             prompt = prompt,
             systemInstruction = AiPromptTemplates.SYSTEM_INSTRUCTION,
-            temperature = 0.45,
-            topP = 0.9,
             maxOutputTokens = 1_200
         )
     }
@@ -30,9 +29,8 @@ class GeminiApi(
         return generateText(
             prompt = prompt,
             systemInstruction = AiPromptTemplates.ROUTE_DECISION_SYSTEM_INSTRUCTION,
-            temperature = 0.15,
-            topP = 0.85,
-            maxOutputTokens = 900
+            maxOutputTokens = 900,
+            jsonResponse = true
         )
     }
 
@@ -45,8 +43,6 @@ class GeminiApi(
             systemInstruction = AiPromptTemplates.ROUTE_DECISION_SYSTEM_INSTRUCTION +
                 "\n\n" +
                 MAPS_GROUNDED_ROUTE_DECISION_RULES,
-            temperature = 0.1,
-            topP = 0.8,
             maxOutputTokens = 1_000,
             enableGoogleMapsGrounding = true,
             mapsGroundingLocation = locationBias
@@ -56,9 +52,8 @@ class GeminiApi(
     private fun generateText(
         prompt: String,
         systemInstruction: String,
-        temperature: Double,
-        topP: Double,
         maxOutputTokens: Int,
+        jsonResponse: Boolean = false,
         enableGoogleMapsGrounding: Boolean = false,
         mapsGroundingLocation: GeoPoint? = null
     ): String {
@@ -103,9 +98,9 @@ class GeminiApi(
             add(
                 "generationConfig",
                 JsonObject().apply {
-                    addProperty("temperature", temperature)
-                    addProperty("topP", topP)
                     addProperty("maxOutputTokens", maxOutputTokens)
+                    add("thinkingConfig", JsonObject().apply { addProperty("thinkingLevel", "low") })
+                    if (jsonResponse) addProperty("responseMimeType", "application/json")
                 }
             )
             if (enableGoogleMapsGrounding) {
@@ -114,7 +109,8 @@ class GeminiApi(
         }.toString()
 
         val request = Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey")
+            .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
+            .addHeader("x-goog-api-key", apiKey)
             .addHeader("Accept", "application/json")
             .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
             .build()
@@ -122,7 +118,7 @@ class GeminiApi(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                error("Gemini request failed: ${response.code} $body")
+                error("Gemini request failed: HTTP ${response.code}")
             }
 
             val root = JsonParser.parseString(body).asJsonObject
@@ -141,7 +137,7 @@ class GeminiApi(
     }
 
     companion object {
-        const val GEMINI_MODEL = "gemini-3.5-flash"
+        val GEMINI_MODEL: String = BuildConfig.GEMINI_MODEL
         private const val MAPS_GROUNDED_ROUTE_DECISION_RULES = """
             Google Maps grounding is enabled for this route classification request.
             Use it only to identify real-world places and their most useful search names.
@@ -161,6 +157,7 @@ class GeminiApi(
 
         private fun defaultClient(): OkHttpClient {
             return OkHttpClient.Builder()
+                .retryOnConnectionFailure(false)
                 .connectTimeout(5, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)
                 .callTimeout(25, TimeUnit.SECONDS)

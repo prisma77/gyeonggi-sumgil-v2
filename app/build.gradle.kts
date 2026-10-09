@@ -25,6 +25,7 @@ fun Properties.unnamedPublicDataKey(): String? {
         "TMAP_APP_KEY",
         "AIRKOREA_SERVICE_KEY",
         "GEMINI_API_KEY",
+        "GEMINI_MODEL",
         "KMA_SERVICE_KEY",
         "WEATHER_SERVICE_KEY",
         "VILAGE_FCST_SERVICE_KEY"
@@ -68,6 +69,10 @@ android {
             (project.findProperty("GEMINI_API_KEY") as? String)
                 ?: localProperties.getProperty("GEMINI_API_KEY")
                 ?: ""
+        val geminiModel =
+            (project.findProperty("GEMINI_MODEL") as? String)
+                ?: localProperties.getProperty("GEMINI_MODEL")
+                ?: "gemini-3.8-flash"
         val kmaServiceKey =
             (project.findProperty("KMA_SERVICE_KEY") as? String)
                 ?: localProperties.getProperty("KMA_SERVICE_KEY")
@@ -80,6 +85,7 @@ android {
         buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"${kakaoNativeKey.asBuildConfigString()}\"")
         buildConfigField("String", "AIRKOREA_SERVICE_KEY", "\"${airKoreaServiceKey.asBuildConfigString()}\"")
         buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey.asBuildConfigString()}\"")
+        buildConfigField("String", "GEMINI_MODEL", "\"${geminiModel.asBuildConfigString()}\"")
         buildConfigField("String", "KMA_SERVICE_KEY", "\"${kmaServiceKey.asBuildConfigString()}\"")
         manifestPlaceholders["NAVER_CLIENT_ID"] = naverClientId
     }

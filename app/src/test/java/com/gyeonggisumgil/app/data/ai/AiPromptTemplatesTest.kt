@@ -51,7 +51,8 @@ class AiPromptTemplatesTest {
         )
 
         assertTrue(prompt.contains("사용자가 말한 장소명이 있으면 place_queries에는 그 장소명만 넣는다"))
-        assertTrue(prompt.contains("거리와 시간이 모두 없고 route라면 distance_meters는 2500"))
+        assertFalse(prompt.contains("\"distance_meters\":2500"))
+        assertTrue(prompt.contains("기본 거리나 시간을 만들지 않는다"))
         assertTrue(prompt.contains("현재 위치 주변 호수나 공원 산책 코스"))
         assertFalse(prompt.contains("미사IC 근처 한강따라"))
     }

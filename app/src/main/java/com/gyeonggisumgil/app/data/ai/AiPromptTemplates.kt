@@ -46,9 +46,16 @@ object AiPromptTemplates {
             - 사용자가 말한 장소명이 있으면 place_queries에는 그 장소명만 넣는다. 비슷한 장소를 새로 추가하지 않는다.
             - "아무 호수", "아무 공원", "근처 공원", "주변 산책로"처럼 장소가 열려 있고 현재 위치 사용이 가능하면 place_queries는 빈 배열, use_current_location은 true로 둔다.
             - 장소가 열려 있는데 현재 위치도 사용할 수 없으면 needs_clarification을 true로 두고 위치나 장소를 물어본다.
-            - 거리와 시간이 모두 없고 route라면 distance_meters는 2500으로 둔다.
-            - "한바퀴", "일주", "둘레"는 route_shape를 "loop"로 둔다. 호수라는 단어가 있으면 "lake_loop"로 둔다.
-            - "하천", "강", "강변", "천", "왕복"은 route_shape를 "river_out_and_back"으로 둔다.
+            - 거리와 시간은 사용자 최신 입력과 최근 대화에 명시된 값만 반환한다. 명시되지 않은 값은 null로 두며 기본 거리나 시간을 만들지 않는다.
+            - "한바퀴", "일주", "둘레" 요청의 길이를 임의의 거리로 바꾸지 않는다. 장소가 명시된 한바퀴 요청에 거리만 추가로 묻지 않는다.
+            - 최신 입력이 "같은 곳", "거기", "3km로 바꿔"처럼 이전 요청을 수정하면 최근 대화의 장소와 경로 형태를 유지하고 명시한 조건만 변경한다.
+            - 공원 안의 거리만 원하거나 공원까지 이동 거리를 제외하라고 하면 route_request_text에 그 거리 범위를 명시한다.
+            - 장소명이 모호하면 필요한 확인 질문 하나만 한다. 검색 도구 결과가 없으므로 장소의 존재, 좌표, 통행 가능 여부가 확인됐다고 말하지 않는다.
+            - route_shape는 사용자가 명시한 이동 형태만 반영한다. 장소명에 "호수", "공원", "강", "천"이 있다는 이유만으로 순환이나 왕복을 추측하지 않는다.
+            - "한바퀴", "일주", "둘레 전체"를 명시하면 "loop"로 두며, 그 대상이 호수이면 "lake_loop"로 둔다. 단순히 "호수공원 3km" 또는 "공원 30분"이면 "unknown"이다.
+            - 하천에서 "왕복", "갔다 돌아오기"를 명시하면 "river_out_and_back"이다. 단순히 "하천 30분"이면 "unknown"이다.
+            - 특정 목적지까지 편도로 이동하겠다고 명시하면 "point_to_point"다. 사용자가 특정 형태를 원하지 않는다고 부정하면 그 형태를 선택하지 않는다.
+            - "중앙공원"처럼 여러 지역에 있는 이름인데 지역이나 확인된 장소 후보가 없으면 지역을 확인하는 질문 하나를 하고 needs_clarification을 true로 둔다. 임의의 지역을 붙이지 않는다.
             - 달리기, 러닝, 조깅이면 activity는 "run", 아니면 "walk"다.
             - route_request_text는 사용자의 의도를 짧게 정리한 한 문장이다.
 
@@ -68,10 +75,10 @@ object AiPromptTemplates {
 
             [예시]
             입력: 경기도의 아무 호수나 공원의 산책 코스 짜줘
-            출력: {"intent":"route","needs_clarification":false,"clarifying_question":null,"route_request_text":"현재 위치 주변 호수나 공원 산책 코스","place_queries":[],"distance_meters":2500,"duration_minutes":null,"activity":"walk","route_shape":"loop","use_current_location":true}
+            출력: {"intent":"route","needs_clarification":true,"clarifying_question":"어느 정도 거리나 시간으로 걷고 싶으세요?","route_request_text":"현재 위치 주변 호수나 공원 산책 코스","place_queries":[],"distance_meters":null,"duration_minutes":null,"activity":"walk","route_shape":"unknown","use_current_location":true}
 
             입력: 광교호수 한바퀴
-            출력: {"intent":"route","needs_clarification":false,"clarifying_question":null,"route_request_text":"광교호수 한바퀴 산책 코스","place_queries":["광교호수"],"distance_meters":2500,"duration_minutes":null,"activity":"walk","route_shape":"lake_loop","use_current_location":false}
+            출력: {"intent":"route","needs_clarification":false,"clarifying_question":null,"route_request_text":"광교호수 한바퀴 산책 코스","place_queries":["광교호수"],"distance_meters":null,"duration_minutes":null,"activity":"walk","route_shape":"lake_loop","use_current_location":false}
 
             입력: 지금 산책해도 괜찮아?
             출력: {"intent":"advice","needs_clarification":false,"clarifying_question":null,"route_request_text":"","place_queries":[],"distance_meters":null,"duration_minutes":null,"activity":"walk","route_shape":"unknown","use_current_location":true}

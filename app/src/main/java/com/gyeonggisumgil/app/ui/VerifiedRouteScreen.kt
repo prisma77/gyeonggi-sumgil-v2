@@ -38,6 +38,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.gyeonggisumgil.app.BuildConfig
+import com.gyeonggisumgil.app.GyeonggiSumgilApplication
+import com.gyeonggisumgil.app.MapSdkStartup
 import com.gyeonggisumgil.app.data.routevalidation.LocalReviewGateway
 import com.gyeonggisumgil.app.data.routevalidation.ReviewGateway
 import com.gyeonggisumgil.app.data.routevalidation.ReviewMap
@@ -55,6 +57,25 @@ import kotlin.math.ceil
 @Composable
 fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () -> Unit) {
     val context = LocalContext.current
+    val mapSdkStartup = (context.applicationContext as GyeonggiSumgilApplication).mapSdkStartup
+    if (mapSdkStartup !is MapSdkStartup.Ready) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("산책 경로 검증", style = MaterialTheme.typography.titleLarge)
+            if (requestedPlaceLabel != null) Text("홈에서 선택한 장소: $requestedPlaceLabel")
+            if (mapSdkStartup is MapSdkStartup.MissingKey) {
+                Text("카카오 네이티브 키가 설정되지 않았습니다.")
+                Text("local.properties의 KAKAO_NATIVE_APP_KEY를 설정한 뒤 다시 빌드해 주세요.")
+            } else {
+                Text("현재 실행 환경에서 카카오 지도 라이브러리를 불러오지 못했습니다.")
+                Text("카카오 지도 SDK 지원 CPU: arm64-v8a, armeabi-v7a")
+                Text("현재 실행 환경 CPU: ${Build.SUPPORTED_ABIS.joinToString()}")
+                Text("Android Studio 실행 기기에서 ARM Android 휴대폰을 선택해 주세요. x86/x86_64 에뮬레이터에서는 이 SDK의 지도를 확인할 수 없습니다.")
+            }
+            Text("지도 확인 전까지 이 화면의 경로 조회는 중단됩니다. 홈과 AI 상담 화면은 이용할 수 있습니다.")
+        }
+        return
+    }
     val owner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val gateway: ReviewGateway = remember { LocalReviewGateway() }
