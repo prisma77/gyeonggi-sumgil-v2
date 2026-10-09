@@ -11,9 +11,15 @@ interface ReviewGateway {
     fun profiles(): JSONObject
     fun riverCandidates(id: String, durationMinutes: Int, walkingSpeedKmh: Double): JSONObject
     fun route(id: String, mode: String): JSONObject
+    fun selectedNetwork(placeId: String, shape: String): JSONObject
+    fun selectedCandidates(placeId: String, targetId: String, distanceMeters: Int?): JSONObject
 }
 
 class LocalReviewGateway : ReviewGateway {
+    override fun selectedNetwork(placeId: String, shape: String) = request("/place-network",
+        JSONObject().put("place_id", placeId).put("shape", shape))
+    override fun selectedCandidates(placeId: String, targetId: String, distanceMeters: Int?) = request("/place-candidates",
+        JSONObject().put("place_id", placeId).put("target_id", targetId).put("distance_m", distanceMeters ?: JSONObject.NULL))
     override fun profiles() = request("/profiles", null)
     override fun riverCandidates(id: String, durationMinutes: Int, walkingSpeedKmh: Double) =
         request("/river-candidates", JSONObject().put("id", id)
@@ -26,7 +32,7 @@ class LocalReviewGateway : ReviewGateway {
         val connection = URL("http://127.0.0.1:8769$path").openConnection() as HttpURLConnection
         try {
             connection.connectTimeout = 5000
-            connection.readTimeout = 35000
+            connection.readTimeout = if (path == "/place-network") 75000 else 35000
             connection.useCaches = false
             connection.instanceFollowRedirects = false
             connection.setRequestProperty("X-Review-Client", "android-route-review")

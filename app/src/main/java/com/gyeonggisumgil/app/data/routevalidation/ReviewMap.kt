@@ -93,6 +93,24 @@ class ReviewMap(context: Context) {
         map?.moveCamera(CameraUpdateFactory.newCenterPosition(position(sourceStart), 16))
     }
 
+    /** Independent OSM target geometry, visually distinct from an API walking route. */
+    fun previewTarget(paths: JSONArray) {
+        clear()
+        val kakaoMap = map ?: return
+        val styles = RouteLineStylesSet.from("osm-target-outline",
+            RouteLineStyles.from(RouteLineStyle.from(6f, Color.rgb(170, 104, 12))))
+        val pointsToFit = mutableListOf<LatLng>()
+        for (index in 0 until paths.length()) {
+            val path = paths.getJSONArray(index)
+            val points = (0 until path.length()).map { position(path.getJSONArray(it)) }
+            require(points.size >= 2)
+            pointsToFit.addAll(points)
+            val segment = RouteLineSegment.from(points).setStyles(styles.getStyles(0))
+            requireNotNull(kakaoMap.routeLineManager).layer.addRouteLine(RouteLineOptions.from(segment).setStylesSet(styles))
+        }
+        if (pointsToFit.isNotEmpty()) kakaoMap.moveCamera(CameraUpdateFactory.fitMapPoints(pointsToFit.toTypedArray(), 70, 18))
+    }
+
     fun draw(response: JSONObject) {
         clear()
         result = response

@@ -40,6 +40,7 @@ import java.time.format.DateTimeFormatter
 /** Place confirmation only; a provider POI is not a walkable entrance or a verified course. */
 @Composable
 internal fun PlaceDiscoveryPanel(initialQuery: String, confirmed: PlaceCandidate?,
+                                 blocked: Boolean = false,
                                  onSelection: (PlaceCandidate?) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -50,7 +51,7 @@ internal fun PlaceDiscoveryPanel(initialQuery: String, confirmed: PlaceCandidate
     var status by remember(initialQuery) { mutableStateOf("장소를 지정하지 않으면 현재 위치 3km 주변에서 공원·호수·하천을 찾습니다.") }
 
     fun search() {
-        if (loading) return
+        if (loading || blocked) return
         val requested = query.trim()
         onSelection(null); result = null; loading = true
         status = "현재 위치와 장소 후보 확인 중"
@@ -86,12 +87,12 @@ internal fun PlaceDiscoveryPanel(initialQuery: String, confirmed: PlaceCandidate
                 query = it; result = null; onSelection(null)
                 status = "입력한 장소명으로 검색합니다. 비워두면 현재 위치 주변을 찾습니다."
             }, label = { Text("장소명·지역 (비우면 주변 검색)") }, singleLine = true,
-                enabled = !loading, modifier = Modifier.fillMaxWidth())
+                enabled = !loading && !blocked, modifier = Modifier.fillMaxWidth())
             Button(onClick = {
                 if (query.isBlank() && !context.hasSearchLocationPermission()) {
                     permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                 } else search()
-            }, enabled = !loading && query.trim().length <= 100, modifier = Modifier.fillMaxWidth()) {
+            }, enabled = !loading && !blocked && query.trim().length <= 100, modifier = Modifier.fillMaxWidth()) {
                 Text(if (loading) "장소 찾는 중" else if (query.isBlank()) "현재 위치 주변 찾기" else "입력한 장소 찾기")
             }
             Text(status)
@@ -105,7 +106,7 @@ internal fun PlaceDiscoveryPanel(initialQuery: String, confirmed: PlaceCandidate
                 if (response.truncated) Text("검색 결과 일부를 최대 5개 표시합니다. 전체 장소 목록은 아닙니다. 지역·장소명을 좁혀 주세요.",
                     style = MaterialTheme.typography.bodySmall)
                 response.candidates.filter { confirmed == null || it.id == confirmed.id }.forEach { place ->
-                    OutlinedButton(onClick = { onSelection(place) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { onSelection(place) }, enabled = !loading && !blocked, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.fillMaxWidth()) {
                             Text("${if (confirmed?.id == place.id) "✓ " else ""}${place.name}")
                             Text(place.address, style = MaterialTheme.typography.bodySmall)
@@ -117,8 +118,8 @@ internal fun PlaceDiscoveryPanel(initialQuery: String, confirmed: PlaceCandidate
             }
             confirmed?.let { place ->
                 Text("확인한 장소: ${place.name} · ${place.address}")
-                Text("이 장소의 보행 경로 생성은 아직 연결되지 않았습니다. 장소 좌표는 출입구나 보행 가능 지점의 보장이 아닙니다.")
-                OutlinedButton(onClick = { onSelection(null) }, enabled = !loading) { Text("장소 선택 해제") }
+                Text("장소 좌표는 출입구나 보행 가능 지점의 보장이 아닙니다. 보행망 확보와 대상 확인 후 경로를 검증해야 합니다.")
+                OutlinedButton(onClick = { onSelection(null) }, enabled = !loading && !blocked) { Text("장소 선택 해제") }
             }
         }
     }

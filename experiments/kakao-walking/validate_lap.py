@@ -84,6 +84,7 @@ def inspect_lap(paths, water):
     gaps = [(index, a[-1], b[0]) for index, (a, b) in enumerate(zip(paths, paths[1:])) if a[-1] != b[0]]
     result["step_join_mismatch_count"] = len(gaps)
     result["step_join_mismatches"] = [dict(after_step=index + 1, gap_m=meters(a, b)) for index, a, b in gaps]
+    result['max_step_join_gap_m'] = max((meters(a, b) for _, a, b in gaps), default=0.0)
     result["endpoint_gap_m"] = meters(paths[0][0], paths[-1][-1])
     result["numeric_join_equivalence_count"] = sum(meters(a, b) <= NUMERIC_JOIN_M for _, a, b in gaps)
     if any(meters(a, b) > NUMERIC_JOIN_M for _, a, b in gaps):

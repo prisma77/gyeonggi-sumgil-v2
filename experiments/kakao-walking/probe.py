@@ -162,7 +162,7 @@ def number(value: object) -> float:
 def inspect(payload: dict, start: Point, end: Point, shape: str = "point_to_point",
             reference: list[Point] | None = None, water: list[Point] | None = None,
             tolerance: float = 20.0, reference_segments: list[tuple[Point, Point]] | None = None,
-            via: list[Point] | None = None) -> dict:
+            via: list[Point] | None = None, source: dict | None = None) -> dict:
     status = payload.get("status")
     result = {"api_status": status, "geometry_check": "NOT_EVALUATED",
               "walking_access": "UNVERIFIED", "field_check": "NOT_EXECUTED"}
@@ -250,15 +250,18 @@ def inspect(payload: dict, start: Point, end: Point, shape: str = "point_to_poin
                     result["max_outside_boundary_distance_m"] = round(max(min(segment_distance(p, a, b)
                                                                     for step in paths for a, b in zip(step, step[1:]))
                                                                 for p in excluded), 1)
-                if any(inside(p, water) for step in paths for a, b in zip(step, step[1:]) for p in samples(a, b)):
-                    unknowns.append("WATER_CROSSING_REQUIRES_BRIDGE_CHECK")
+                from lake_evidence import inspect_water_overlap
+                evidence = inspect_water_overlap(paths, water, source)
+                result['water_overlap_evidence'] = evidence
+                unknowns.extend(evidence['unresolved'])
         if shape == "river_out_and_back":
             from validate_river import inspect_river
             river = inspect_river(paths, reference or [])
             result["river_validation"] = river
             failures.extend(river["failures"])
             unknowns.extend(river["unresolved"])
-        if shape == "lake_loop":
+        if shape == "lake_loop" and (result.get('exact_edge_retraced_distance_m', 0) > 0.001 or
+                                      'LAP_NON_SIMPLE_GEOMETRY' in unknowns):
             unknowns.append("REPETITION_AND_TOPOLOGY_REVIEW_REQUIRED")
         result.update(distance_m=distance, time_s=duration, geometry_distance_m=round(geometric_distance, 1),
                       step_count=len(paths), coordinate_count=sum(map(len, paths)),

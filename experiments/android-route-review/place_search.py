@@ -1,6 +1,7 @@
 """Transient place discovery; never chooses a place or calls a walking API."""
 import math
 import re
+import time
 from datetime import datetime, timezone
 
 
@@ -16,8 +17,18 @@ def walking_category(value):
 class PlaceSearchService:
     def __init__(self, client):
         self.client = client
+        self.available = {}
+        self.expires = 0
+        self.generation = 0
+
+    def resolve(self, identifier):
+        if not isinstance(identifier, str) or time.monotonic() > self.expires or identifier not in self.available:
+            raise ValueError("Select a place from the current search; no arbitrary coordinates")
+        return dict(self.available[identifier])
 
     def search(self, request):
+        self.available = {}
+        self.generation += 1
         if not isinstance(request, dict) or set(request) != {"query", "location"}:
             raise ValueError("Explicit query and location state required")
         query, location = request["query"], request["location"]
@@ -90,6 +101,9 @@ class PlaceSearchService:
         items = list(candidates.values())
         if location is not None:
             items.sort(key=lambda p: p["distance_m"] if p["distance_m"] is not None else math.inf)
+        # Minimal selectable POIs in RAM for this debug session only; never store GPS or raw response.
+        self.available = {item['id']: {key: item[key] for key in ('id', 'name', 'x', 'y', 'category')} for item in items[:5]}
+        self.expires = time.monotonic() + 600
         return dict(query=query, scope="NEARBY_3KM" if not query else "NAMED_QUERY",
                     location_used=location is not None, candidates=items[:5],
                     truncated=truncated or len(items) > 5, source="카카오 장소 검색 API",

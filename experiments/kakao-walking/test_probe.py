@@ -86,10 +86,16 @@ class GeometrySafetyTests(unittest.TestCase):
 
     def test_small_step_gap_does_not_get_an_invented_enclosure(self):
         second = [(self.loop[2][0] + 0.000001, self.loop[2][1]), *self.loop[3:]]
-        result = inspect(response([self.loop[:3], second]), self.loop[0], self.loop[0], "lake_loop", self.loop, self.water)
+        payload = response([self.loop[:3], second])
+        original = copy.deepcopy(payload)
+        result = inspect(payload, self.loop[0], self.loop[0], "lake_loop", self.loop, self.water)
         self.assertIn("LAP_DISCONNECTED_GEOMETRY", result["unresolved"])
         self.assertEqual("NOT_EVALUATED_DISCONNECTED_GEOMETRY", result["lake_topology_sampling"])
         self.assertNotIn("water_boundary_outside_fraction", result)
+        lap = result["lap_validation"]
+        self.assertAlmostEqual(meters(self.loop[2], second[0]), lap["max_step_join_gap_m"])
+        self.assertEqual(1, lap["step_join_mismatches"][0]["after_step"])
+        self.assertEqual(original, payload)
 
     def test_small_endpoint_gap_does_not_get_a_winding_measurement(self):
         path = self.loop[:-1] + [(self.loop[0][0] + 0.000001, self.loop[0][1])]
@@ -143,8 +149,19 @@ class GeometrySafetyTests(unittest.TestCase):
     def test_geometric_lap_does_not_claim_field_walkability(self):
         result = inspect(response([self.loop]), self.loop[0], self.loop[0], "lake_loop", self.loop, self.water)
         self.assertEqual([], result["failures"])
-        self.assertEqual("INCOMPLETE", result["geometry_check"])
+        self.assertEqual([], result["unresolved"])
+        self.assertEqual("PASS", result["geometry_check"])
+        self.assertEqual("PASS_GEOMETRY_ONLY", result["lap_validation"]["status"])
+        self.assertEqual(0, result["lap_validation"]["max_step_join_gap_m"])
         self.assertEqual("UNVERIFIED", result["walking_access"])
+        self.assertEqual("NOT_EXECUTED", result["field_check"])
+
+    def test_repeated_lake_loop_still_requires_topology_review(self):
+        path = self.loop + self.loop[1:]
+        result = inspect(response([path]), path[0], path[-1], "lake_loop", self.loop, self.water)
+        self.assertIn("REPETITION_AND_TOPOLOGY_REVIEW_REQUIRED", result["unresolved"])
+        self.assertIn("LAP_NON_SIMPLE_GEOMETRY", result["unresolved"])
+        self.assertNotEqual("PASS", result["geometry_check"])
 
     def test_closed_reference_cannot_prove_a_unique_river_turnpoint(self):
         path = [self.loop[0], self.loop[1], self.loop[0]]

@@ -17,6 +17,9 @@ from audit_inputs import audit_inputs
 from plan_river_candidates import candidate_id, compare_distance, inspect_distance, inspect_target, plan
 from compare_candidates import compare, trial_summary
 from place_search import PlaceSearchService
+from selected_network import SelectedNetwork, OverpassSource
+import secrets
+import time
 
 
 def scenario_conditions(site):
@@ -60,9 +63,10 @@ def load_catalog(path):
 
 
 class ReviewService:
-    def __init__(self, profiles, client, place_search=None):
+    def __init__(self, profiles, client, place_search=None, source_provider=None):
         self.base_profiles, self.profiles, self.client = dict(profiles), dict(profiles), client
         self.place_search = place_search
+        self.selected_network = SelectedNetwork(place_search, source_provider) if place_search and source_provider else None
         self.trials = {}  # Metrics/decisions only: never store provider paths or responses.
         self.generated_ids = set()
 
@@ -74,13 +78,40 @@ class ReviewService:
                     request_scenario=scenario_conditions(site),
                     river_candidate=site.get("river_candidate"), base_profile_id=site.get("base_profile_id", identifier))
 
+    def acquire_place(self, request):
+        if self.selected_network is None:
+            raise RuntimeError('Selected source acquisition unavailable')
+        self.profiles = dict(self.base_profiles)
+        self.trials = {}; self.generated_ids = set()
+        return self.selected_network.acquire(request)
+
+    def place_candidates(self, request):
+        if self.selected_network is None:
+            raise RuntimeError('Selected source acquisition unavailable')
+        self.profiles = dict(self.base_profiles)
+        self.trials = {}; self.generated_ids = set()
+        sites, result = self.selected_network.candidates(request)
+        for i, site in enumerate(sites):
+            site['source_valid_until'] = time.monotonic()+600
+            identifier = 'selected-' + secrets.token_hex(10)
+            length = (site.get('river_candidate') or {}).get('source_expected_roundtrip_m', site['source_network_length_m'])
+            label = f"{site['name']} · 원본 후보 {i+1} · {length:.0f}m"
+            self.profiles[identifier] = label, site
+            item = self.profile(identifier, label, site)
+            item.update(selected_place_id=site['selected_place_id'], source_distance_m=length,
+                        departure_scope=site['departure_scope'], input_review_policy=site['input_review_policy'])
+            result['candidates'].append(item)
+        return result
+
     def catalog(self):
         # Independent OSM inputs only. No routing requests, no Kakao response cache.
         return {"profiles": [self.profile(identifier, label, site)
                              for identifier, (label, site) in self.base_profiles.items()],
                 "calls_sent": self.client.calls, "call_limit": self.client.limit,
                 "place_calls_sent": self.place_search.client.calls if self.place_search else 0,
-                "place_call_limit": self.place_search.client.limit if self.place_search else 0}
+                "place_call_limit": self.place_search.client.limit if self.place_search else 0,
+                "source_calls_sent": self.selected_network.provider.calls if self.selected_network else 0,
+                "source_call_limit": self.selected_network.provider.limit if self.selected_network else 0}
 
     def candidates(self, request):
         required = {"id", "duration_minutes", "walking_speed_kmh"}
@@ -123,6 +154,10 @@ class ReviewService:
         if not isinstance(identifier, str) or identifier not in self.profiles or mode not in probe.MODES:
             raise ValueError("Unknown profile or mode")
         _, site = self.profiles[identifier]
+        if site.get('selected_place_id'):
+            if time.monotonic() > site['source_valid_until']:
+                raise ValueError('Selected source expired')
+            self.selected_network.ensure_current(site['selected_place_id'], site['selected_source_id'])
         if site["input_validation"]["failures"]:
             raise ValueError("Source input validation failed; no routing request sent")
         scenario = scenario_conditions(site)
@@ -133,9 +168,9 @@ class ReviewService:
                       via_y=",".join(str(p[1]) for p in via))
         status, payload, elapsed = self.client.get("/v2/routing/walk", params)
         result = probe.inspect(payload, start, end, shape, site["reference_walkway"],
-                               site["water_boundary"], 20, site["reference_segments"], via)
+                               site["water_boundary"], 20, site["reference_segments"], via, site.get('_source_data'))
         candidate = site.get("river_candidate")
-        distance_conditions = candidate if candidate else scenario
+        distance_conditions = site.get('distance_conditions') or (candidate if candidate else scenario)
         if distance_conditions:
             distance = inspect_distance(result, distance_conditions)
             result["distance_validation"] = distance
@@ -145,12 +180,13 @@ class ReviewService:
                 result["geometry_check"] = "FAIL"
             elif distance["unresolved"] and result["geometry_check"] == "PASS":
                 result["geometry_check"] = "INCOMPLETE"
-        if candidate:
+        if candidate and not candidate.get('distance_only'):
             target = inspect_target(result, candidate)
             result["target_validation"] = target
             result.setdefault("failures", []).extend(target["failures"])
             if target["failures"]:
                 result["geometry_check"] = "FAIL"
+        if candidate:
             comparison = compare_distance(result, candidate)
             result["source_distance_comparison"] = comparison
             result.setdefault("unresolved", []).extend(comparison["unresolved"])
@@ -177,6 +213,8 @@ class ReviewService:
                     input_validation=site["input_validation"],
                     river_candidate=candidate,
                     request_scenario=scenario,
+                    selected_place_id=site.get('selected_place_id'), selected_place_name=site.get('selected_place_name'),
+                    confirmed_target=site.get('confirmed_target'), departure_scope=site.get('departure_scope'),
                     candidate_comparison=candidate_comparison,
                     requested_at=datetime.now(timezone.utc).isoformat(), elapsed_s=round(elapsed, 2),
                     calls_sent=self.client.calls, call_limit=self.client.limit,
@@ -186,7 +224,7 @@ class ReviewService:
 def make_handler(service):
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
-            self.request.settimeout(35)
+            self.request.settimeout(75)
             super().setup()
 
         def log_message(self, *_):
@@ -223,7 +261,7 @@ def make_handler(service):
             if not self.allowed():
                 self.reply(403, {"error": "LOCAL_CLIENT_REQUIRED"})
                 return
-            if self.path not in ("/route", "/river-candidates", "/places"):
+            if self.path not in ("/route", "/river-candidates", "/places", "/place-network", "/place-candidates"):
                 self.reply(404, {"error": "NOT_FOUND"})
                 return
             try:
@@ -235,6 +273,10 @@ def make_handler(service):
                     if service.place_search is None:
                         raise RuntimeError("Place search unavailable")
                     result = service.place_search.search(request)
+                elif self.path == '/place-network':
+                    result = service.acquire_place(request)
+                elif self.path == '/place-candidates':
+                    result = service.place_candidates(request)
                 else:
                     result = service.route(request) if self.path == "/route" else service.candidates(request)
                 self.reply(200, result)
@@ -251,14 +293,15 @@ def main():
     parser.add_argument("--port", type=int, default=8769)
     parser.add_argument("--max-calls", type=int, default=6)
     parser.add_argument("--max-search-calls", type=int, default=12)
+    parser.add_argument("--max-source-calls", type=int, default=4)
     args = parser.parse_args()
-    if not 1 <= args.max_calls <= 20 or not 1 <= args.max_search_calls <= 30 or not 1024 <= args.port <= 65535:
+    if not 1 <= args.max_calls <= 20 or not 1 <= args.max_search_calls <= 30 or not 1 <= args.max_source_calls <= 8 or not 1024 <= args.port <= 65535:
         raise ValueError("Invalid limits")
     key = probe.read_key()
     if not key:
         raise ValueError("REST key missing")
     service = ReviewService(load_catalog(args.catalog.resolve()), probe.Client(key, args.max_calls),
-                            PlaceSearchService(probe.Client(key, args.max_search_calls)))
+                            PlaceSearchService(probe.Client(key, args.max_search_calls)), OverpassSource(args.max_source_calls))
     server = HTTPServer(("127.0.0.1", args.port), make_handler(service))
     server.timeout = 1
     print(f"Loopback review bridge on port {args.port}; limit {args.max_calls}; no response persistence.", flush=True)

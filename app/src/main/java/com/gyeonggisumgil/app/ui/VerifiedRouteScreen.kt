@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -94,6 +95,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
     var mapErrorCode by remember { mutableStateOf<Int?>(null) }
     var mapStatus by remember { mutableStateOf("로컬 검증 서버 연결 중") }
     var result by remember { mutableStateOf<JSONObject?>(null) }
+    var previewingTarget by remember { mutableStateOf(false) }
     var durationText by remember { mutableStateOf("38") }
     var walkingSpeed by remember { mutableStateOf(4.0) }
     var riverCandidates by remember { mutableStateOf(emptyList<JSONObject>()) }
@@ -120,7 +122,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
             val list = response.getJSONArray("profiles")
             profiles = (0 until list.length()).map { list.getJSONObject(it) }
             check(profiles.isNotEmpty())
-            requestStatus = "시험 입력을 직접 선택하세요. 장소 검색과 코스 자동 생성은 다음 단계입니다."
+            requestStatus = "장소를 검색·확인하거나 시험 입력을 직접 선택하세요."
             if (BuildConfig.KAKAO_NATIVE_APP_KEY.isBlank()) {
                 mapStatus = "카카오 네이티브 키 미설정 · 경로 조회 중단"
             } else {
@@ -145,7 +147,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
         }
     }
 
-    fun clearResult() { result = null; renderer.clear() }
+    fun clearResult() { result = null; previewingTarget = false; renderer.clear() }
 
     fun clearCandidates() {
         val baseId = selected?.optString("base_profile_id")
@@ -156,11 +158,24 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("산책 경로 검증", style = MaterialTheme.typography.titleLarge)
-        PlaceDiscoveryPanel(requestedPlaceLabel.orEmpty(), confirmedPlace) { place ->
+        PlaceDiscoveryPanel(requestedPlaceLabel.orEmpty(), confirmedPlace, blocked = loading) { place ->
             confirmedPlace = place; selected = null; riverCandidates = emptyList(); generation = null; clearResult()
             if (place != null) renderer.center(JSONArray(listOf(place.point.longitude, place.point.latitude)))
             requestStatus = if (place == null) "시험 입력을 직접 선택하세요." else
-                "확인한 장소의 검증된 경로는 아직 연결되지 않았습니다. 다른 시험 장소로 자동 대체하지 않습니다."
+                "확인한 장소의 보행망을 확보하고 대상을 확인하세요."
+        }
+        confirmedPlace?.let { place ->
+            key(place.id) {
+                SelectedPlaceRoutePanel(place, gateway, loading, mapReady,
+                    onBusy = { loading = it },
+                    onClear = { selected = null; clearResult() },
+                    onPreview = { paths -> previewingTarget = true; renderer.previewTarget(paths) },
+                    onCandidate = { profile ->
+                        check(profile.getString("selected_place_id") == place.id)
+                        selected = profile; clearResult(); renderer.center(profile.getJSONArray("start"))
+                        requestStatus = "선택한 장소의 원본 후보 선택 · 실제 API 검증 전 · 현재 통행 미확인"
+                    })
+            }
         }
         Text("실제 도보 API 경로 · 추천 승인 전 시험", color = MaterialTheme.colorScheme.primary)
         selected?.optJSONObject("request_scenario")?.let { scenario ->
@@ -172,7 +187,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("홈에서 선택한 장소: $requestedPlaceLabel")
-                    Text("이 장소의 검증된 경로는 아직 연결되지 않았습니다. 다른 시험 입력으로 자동 대체하지 않습니다.")
+                    Text("위 검색에서 장소명·주소를 확인한 뒤 같은 장소의 보행망을 확보하세요. 다른 시험 입력으로 자동 대체하지 않습니다.")
                     OutlinedButton(onClick = onClearRequestedPlace, enabled = !loading) { Text("장소 선택을 해제하고 시험 입력 보기") }
                 }
             }
@@ -193,7 +208,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
                         })
                     }
                 }
-                if (selected?.optString("shape") == "river_out_and_back") {
+                if (confirmedPlace == null && selected?.optString("shape") == "river_out_and_back") {
                     Text("하천 왕복 목표 2~3km · 기본 38분, 4km/h 가정. 거리와 시간을 함께 검사합니다.")
                     OutlinedTextField(value = durationText, onValueChange = {
                         durationText = it; clearCandidates()
@@ -283,6 +298,7 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
                         try {
                             val response = withContext(Dispatchers.IO) { gateway.route(id, requestedMode) }
                             check(response.getString("id") == id && response.getString("mode") == requestedMode)
+                            confirmedPlace?.let { check(response.getString("selected_place_id") == it.id) }
                             check(response.getString("recommendation_quality") == "NOT_ACCEPTED")
                             renderer.draw(response)
                             result = response
@@ -293,7 +309,9 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
                             clearResult(); requestStatus = "조회 또는 표시 실패 · 이전 경로 폐기. 호출 한도·네트워크·응답 확인 필요. 자동 재시도 없음."
                         } finally { loading = false }
                     }
-                }, enabled = !loading && mapReady && selected != null && requestedPlaceLabel == null && confirmedPlace == null &&
+                }, enabled = !loading && mapReady && selected != null &&
+                    ((confirmedPlace != null && selected?.optString("selected_place_id") == confirmedPlace?.id) ||
+                        (confirmedPlace == null && requestedPlaceLabel == null && selected?.optString("selected_place_id").isNullOrBlank())) &&
                     (selected?.optString("shape") != "river_out_and_back" || selected?.optJSONObject("river_candidate") != null),
                     modifier = Modifier.fillMaxWidth()) { Text(if (loading) "확인 중" else "이 입력으로 실제 경로 조회 (1회)") }
             }
@@ -351,7 +369,8 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
                 color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
         }
         AndroidView(factory = { renderer.view }, modifier = Modifier.fillMaxWidth().height(300.dp))
-        Text((if (result?.optString("shape") == "river_out_and_back")
+        Text(if (previewingTarget) "주황색: OSM 원본 수역 경계·하천 선형. 실제 보행 경로나 추천 코스가 아닙니다. 선택 장소의 대상인지 확인하세요."
+        else (if (result?.optString("shape") == "river_out_and_back")
             "S: 출발·복귀 / R: 반환점 / 숫자: 실제 요청 경유점\n같은 길 왕복은 지도에서 두 방향의 선이 겹칠 수 있습니다."
         else "S: 동일 출발·도착 / 숫자: 요청 경유점(최대 5개) / 선: 반환된 실제 구간") +
             "\n원 중심은 요청 좌표입니다. 선과 떨어진 점은 경유점 검사 결과를 확인하세요.\n파란색도 추천 승인이 아닙니다. 붉은색은 검사 실패입니다.", style = MaterialTheme.typography.bodySmall)
@@ -361,7 +380,9 @@ fun VerifiedRouteScreen(requestedPlaceLabel: String?, onClearRequestedPlace: () 
                 result?.let { Text(describeReview(it), style = MaterialTheme.typography.bodySmall) }
                 selected?.let { profile ->
                     profile.optJSONObject("input_change")?.let { change ->
-                        Text(if (change.has("alternative_start_node"))
+                        Text(if (profile.has("selected_place_id"))
+                            "확인한 장소의 원본 보행망에서 생성한 입력입니다. 집↔장소 접근 경로는 포함하지 않습니다."
+                        else if (change.has("alternative_start_node"))
                             "호수 외곽 보행망에서 새로 고른 비교 입력입니다. 출발점도 달라졌습니다. 원래 요청을 대체하지 않습니다."
                         else if (change.optInt("index", -1) == 5)
                             "4번을 보행로의 원본 노드로 바꾼 비교 입력입니다. 원래 요청을 대체하지 않습니다."
@@ -425,7 +446,8 @@ private fun describeCodes(array: JSONArray?): String = if (array == null || arra
             "LAP_NON_SIMPLE_GEOMETRY" -> "반복·자기 접촉/교차가 있어 한 바퀴 판정 보류"
             "TARGET_WATER_INVALID_GEOMETRY" -> "수역 경계 형상 검토 필요"
             "TARGET_WATER_BOUNDARY_CONTACT_REQUIRES_REVIEW" -> "경로와 수역 경계가 겹쳐 정확도 검토 필요"
-            "WATER_CROSSING_REQUIRES_BRIDGE_CHECK" -> "수역 통과 의심 구간의 교량 확인 필요"
+            "WATER_CROSSING_REQUIRES_BRIDGE_CHECK" -> "OSM 수역과 경로 겹침 · 교량·경계 확인 필요"
+            "WATER_OVERLAP_ANALYSIS_LIMIT_REACHED" -> "수역 겹침 분석 한도 초과 · 판정 보류"
             "REPETITION_AND_TOPOLOGY_REVIEW_REQUIRED" -> "반복·순환 구조의 추가 검토 필요"
             "LEG_WAYPOINT_ALIGNMENT_REQUIRES_REVIEW" -> "API 구간 경계와 경유점 대응 검토 필요"
             "TURNPOINT_AND_DIRECTION_REVIEW_REQUIRED" -> "하천 반환점과 왕복 방향의 추가 검토 필요"
@@ -482,9 +504,31 @@ private fun describeReview(response: JSONObject): String {
                 "PASS_GEOMETRY_ONLY" -> "선형 조건만 통과 · 실제 통행 미확인"
                 "FAIL" -> "순환 선형 조건 불충족"
                 else -> "판정 보류"
-            } + "\n${describeCodes(lap.optJSONArray("failures"))}\n${describeCodes(lap.optJSONArray("unresolved"))}"
+            } + "\n${describeCodes(lap.optJSONArray("failures"))}\n${describeCodes(lap.optJSONArray("unresolved"))}" +
+            (if (lap.has("max_step_join_gap_m"))
+                "\n구간 연결 차이 최대 ${"%.3f".format(lap.getDouble("max_step_join_gap_m"))}m · 출발/복귀 차이 ${"%.3f".format(lap.getDouble("endpoint_gap_m"))}m\n분석의 수치 동등성 기준 ${lap.getDouble("numeric_join_tolerance_m")}m · 실제 경로를 보정하지 않음"
+            else "") + (lap.optJSONArray("step_join_mismatches")?.let { gaps ->
+                val details = (0 until minOf(gaps.length(), 5)).joinToString(", ") { i ->
+                    val gap = gaps.getJSONObject(i)
+                    "${gap.getInt("after_step")}→${gap.getInt("after_step")+1}구간 ${"%.3f".format(gap.getDouble("gap_m"))}m"
+                }
+                if (details.isBlank()) "" else "\n연결 차이: $details${if (gaps.length()>5) " 외 ${gaps.length()-5}개" else ""}"
+            } ?: "")
         }.orEmpty() +
-        response.optJSONObject("river_candidate")?.let { candidate ->
+        inspection.optJSONObject("water_overlap_evidence")?.let { evidence ->
+            if (!evidence.has("inside_source_water_samples")) "\nOSM 수역 겹침: 평가 못함"
+            else "\nOSM 수역 내부 검사점 ${evidence.getInt("inside_source_water_samples")}개 · 경계 안쪽 최대 ${evidence.getDouble("max_inside_offset_m")}m" +
+                (if (evidence.optBoolean("bridge_source_available"))
+                    "\n원본 보행 교량 5m 이내 검사점 ${evidence.getInt("near_source_bridge_samples")}개 · 태그 대조만 수행, 통행 보장 아님"
+                else "\n교량 원본 없음 · 교량 대조 평가 못함") +
+                (evidence.optJSONArray("steps")?.let { steps ->
+                    val indices = (0 until minOf(steps.length(), 5)).joinToString(", ") { i ->
+                        steps.getJSONObject(i).getInt("step").toString()
+                    }
+                    if (indices.isBlank()) "" else "\n수역 겹침 검사 구간: $indices${if (steps.length()>5) " 외 ${steps.length()-5}개" else ""}"
+                } ?: "")
+        }.orEmpty() +
+        response.optJSONObject("river_candidate")?.takeIf { it.has("requested_duration_minutes") }?.let { candidate ->
             "\n요청 ${candidate.getInt("requested_duration_minutes")}분 · 원본 예상 ${candidate.getDouble("source_estimated_minutes")}분 (${candidate.getDouble("assumed_walking_speed_kmh")}km/h 가정)"
         }.orEmpty() +
         inspection.optJSONObject("target_validation")?.let { target ->

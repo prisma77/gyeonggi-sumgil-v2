@@ -21,6 +21,8 @@ def network(source):
     if not source_ok(source.get("source")):
         raise ValueError("Licensed source and retrieval timestamp required")
     coordinates, edges, ways = {}, {}, {}
+    allowlist = source.get('source_edge_allowlist')
+    allowed = None if allowlist is None else {tuple(edge) for edge in allowlist}
     for way in source["osm"]["elements"]:
         if way["type"] != "way" or not eligible(way.get("tags", {})):
             continue
@@ -41,7 +43,13 @@ def network(source):
             elif foot_direction == "-1":
                 directions = [(b, a)]
             for edge in directions:
-                edges.setdefault(edge, []).append(way["id"])
+                if allowed is None or edge in allowed:
+                    edges.setdefault(edge, []).append(way["id"])
+    if allowed is not None:
+        used = {n for edge in edges for n in edge}
+        coordinates = {n: p for n, p in coordinates.items() if n in used}
+        used_ways = {wid for ids in edges.values() for wid in ids}
+        ways = {wid: w for wid, w in ways.items() if wid in used_ways}
     return coordinates, edges, ways
 
 
