@@ -116,19 +116,28 @@ class ReviewMap(context: Context) {
         }
         val targets = listOf(response.getJSONArray("start")) +
             response.getJSONArray("via").let { via -> (0 until via.length()).map { via.getJSONArray(it) } }
-        targets.forEachIndexed { index, target ->
+        val river = response.optString("shape") == "river_out_and_back"
+        val turnIndex = response.optJSONObject("river_candidate")?.optInt("turnpoint_via_index", targets.lastIndex - 1)
+            ?.plus(1) ?: targets.lastIndex
+        // Revisited anchors retain their exact coordinates and share one label.
+        val groupedTargets = targets.withIndex().groupBy { it.value.getDouble(0) to it.value.getDouble(1) }
+        groupedTargets.values.forEach { group ->
+            val target = group.first().value
             val point = position(target)
             fitPoints.add(point)
             val marker = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(marker)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
             canvas.drawCircle(32f, 32f, 29f, paint)
-            paint.color = Color.rgb(27, 75, 73)
+            val turnpoint = river && group.any { it.index == turnIndex }
+            paint.color = if (turnpoint) Color.rgb(165, 76, 19) else Color.rgb(27, 75, 73)
             canvas.drawCircle(32f, 32f, 25f, paint)
             paint.color = Color.WHITE
-            paint.textSize = 28f
+            val markerText = if (group.any { it.index == 0 }) "S" else if (turnpoint) "R"
+                else group.joinToString("·") { it.index.toString() }
+            paint.textSize = if (markerText.length > 1) 22f else 28f
             paint.textAlign = Paint.Align.CENTER
-            canvas.drawText(if (index == 0) "S" else "$index", 32f, 42f, paint)
+            canvas.drawText(markerText, 32f, 42f, paint)
             val markerStyle = LabelStyles.from(LabelStyle.from(marker).setAnchorPoint(0.5f, 0.5f))
             labelLayer.addLabel(LabelOptions.from(point).setStyles(markerStyle))
         }

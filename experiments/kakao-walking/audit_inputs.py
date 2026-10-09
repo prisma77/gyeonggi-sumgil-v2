@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 from prepare_site import network
-from probe import cases, inside, point
+from probe import inside, point, routing_inputs
+from source_water import outer_boundary
 
 
 def audit_inputs(site, source):
@@ -15,24 +16,34 @@ def audit_inputs(site, source):
         failures.append("INPUT_SOURCE_METADATA_MISMATCH")
     ids = site.get("sample_node_ids", [])
     points = [point(p) for p in site["walk_points"]]
-    if site.get("shape") not in ("lake_loop", "river_out_and_back") or len(points) < 8 or len(set(points)) != len(points):
+    minimum_points = 2 if "river_candidate" in site else 8
+    if site.get("shape") not in ("lake_loop", "river_out_and_back") or len(points) < minimum_points or len(set(points)) != len(points):
         failures.append("INPUT_SHAPE_OR_SAMPLE_COUNT_INVALID")
     if len(ids) != len(points) or any(n not in coordinates or coordinates[n] != p for n, p in zip(ids, points)):
         failures.append("INPUT_POINT_NOT_AN_ELIGIBLE_SOURCE_NODE")
     water = [point(p) for p in site.get("water_boundary", [])]
     if site["shape"] == "lake_loop":
-        target = next((w for w in source["osm"]["elements"] if w.get("type") == "way" and w.get("id") == site.get("water_way_id")), None)
-        if (not target or target.get("tags", {}).get("natural") != "water" or
-                not target.get("nodes") or target["nodes"][0] != target["nodes"][-1] or
-                len(target["nodes"]) != len(target.get("geometry", [])) or
-                water != [point([p["lon"], p["lat"]]) for p in target["geometry"]] or
-                site.get("water_source") != source["source"]):
+        try:
+            boundary, reference = outer_boundary(source, site.get("water_way_id"), site.get("water_relation_id"))
+            matched = (water == boundary and site.get("water_source") == source["source"] and
+                       ("water_boundary_reference" not in site or site["water_boundary_reference"] == reference))
+            if reference["inner_way_ids"]:
+                warnings.append("WATER_INNER_AREAS_NOT_MODELED")
+        except (ValueError, KeyError, TypeError):
+            matched = False
+        if not matched:
             failures.append("INPUT_WATER_BOUNDARY_SOURCE_MISMATCH")
     result = dict(status="FAIL" if failures else "SOURCE_MATCHED_REVIEW_REQUIRED", failures=failures,
                   unresolved=warnings, walking_access="UNVERIFIED", points=[], network_sequence="NOT_EVALUATED")
     if failures:
         return result
-    _, start, _, via, _ = next(c for c in cases(points, site["shape"]) if c[0] == "same_point_via_5")
+    start, _, via, _ = routing_inputs(site)
+    if "river_candidate" in site:
+        source_nodes = site.get("source_node_ids", [])
+        if (source_nodes != ids or [point(p) for p in site.get("reference_walkway", [])] != points or
+                any((a, b) not in edges or (b, a) not in edges for a, b in zip(ids, ids[1:]))):
+            failures.append("RIVER_SOURCE_CORRIDOR_NOT_BIDIRECTIONAL")
+            result["status"] = "FAIL"
     indexes = [points.index(p) for p in [start, *via]]
     adjacency = {}
     for a, b in edges:

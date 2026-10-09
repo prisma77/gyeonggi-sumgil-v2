@@ -8,15 +8,36 @@ from pathlib import Path
 from prepare_site import draft, network
 from probe import inside, meters
 from validate_lap import inspect_lap, intersection, projected
+from source_water import outer_boundary
 
 
-def plan(source, water_id, start_node, reviewed=False):
-    coordinates, edges, ways = network(source)
-    target = next(e for e in source["osm"]["elements"] if e["type"] == "way" and e["id"] == water_id)
-    boundary = [(p["lon"], p["lat"]) for p in target["geometry"]]
+def interior_reference(boundary):
+    """Analytical winding origin only, never a walking coordinate or route vertex."""
     origin = tuple(sum(p[i] for p in boundary[:-1]) / (len(boundary) - 1) for i in (0, 1))
-    if not inside(origin, boundary):
-        raise ValueError("Target mean is outside water; an independently reviewed interior point is needed")
+    if inside(origin, boundary):
+        return origin
+    # A concave polygon's mean can lie on land. Test exact interior scanline spans.
+    levels = sorted({p[1] for p in boundary})
+    candidates = []
+    for low, high in zip(levels, levels[1:]):
+        y = (low + high) / 2
+        crossings = sorted(a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+                           for a, b in zip(boundary, boundary[1:]) if (a[1] > y) != (b[1] > y))
+        if len(crossings) % 2:
+            raise ValueError("Invalid source polygon scanline")
+        for left, right in zip(crossings[::2], crossings[1::2]):
+            candidate = ((left + right) / 2, y)
+            if right > left and inside(candidate, boundary):
+                candidates.append((right - left, candidate))
+    if not candidates:
+        raise ValueError("No interior reference for source polygon")
+    return max(candidates)[1]
+
+
+def plan(source, water_id, start_node, reviewed=False, water_relation_id=None):
+    coordinates, edges, ways = network(source)
+    boundary, _ = outer_boundary(source, water_id, water_relation_id)
+    origin = interior_reference(boundary)
     water_xy = projected(boundary, origin)
     angle = {n: math.atan2(p[1] - origin[1], (p[0] - origin[0]) * math.cos(math.radians(origin[1])))
              for n, p in coordinates.items()}
@@ -64,8 +85,9 @@ def plan(source, water_id, start_node, reviewed=False):
     if not candidates:
         raise ValueError("No simple source ring enclosing the complete water boundary")
     cycle = min(candidates, key=lambda ns: sum(meters(coordinates[a], coordinates[b]) for a, b in zip(ns, ns[1:])))
-    selection = {"name": "호수 외곽 보행망 순환 비교", "shape": "lake_loop", "water_way_id": water_id,
+    selection = {"name": "호수 외곽 보행망 순환 비교", "shape": "lake_loop",
                  "node_ids": cycle, "notes": ["Existing directed source edges only; source geometry pass is not current access proof."]}
+    selection["water_relation_id" if water_relation_id is not None else "water_way_id"] = water_relation_id if water_relation_id is not None else water_id
     result = draft(source, selection)
     # Prefer ground nodes on this exact cycle, in the same order, without inventing coordinates.
     bridge_nodes = {n for way in ways.values() if way.get("tags", {}).get("bridge", "no") != "no" for n in way["nodes"]}
@@ -103,13 +125,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--water-way", type=int, required=True)
+    water_group = parser.add_mutually_exclusive_group(required=True)
+    water_group.add_argument("--water-way", type=int)
+    water_group.add_argument("--water-relation", type=int)
     parser.add_argument("--start-node", type=int, required=True)
     parser.add_argument("--review-source-inputs", action="store_true",
                         help="Explicitly acknowledge independent input review; never approves current access")
     args = parser.parse_args()
     result = plan(json.loads(args.source.read_text(encoding="utf-8")), args.water_way, args.start_node,
-                  reviewed=args.review_source_inputs)
+                  reviewed=args.review_source_inputs, water_relation_id=args.water_relation)
     with args.output.open("x", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=False, indent=2)
     print(json.dumps({"source_network_length_m": result["source_network_length_m"],

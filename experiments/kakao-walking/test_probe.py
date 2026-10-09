@@ -146,11 +146,11 @@ class GeometrySafetyTests(unittest.TestCase):
         self.assertEqual("INCOMPLETE", result["geometry_check"])
         self.assertEqual("UNVERIFIED", result["walking_access"])
 
-    def test_river_return_requires_turnpoint_review(self):
+    def test_closed_reference_cannot_prove_a_unique_river_turnpoint(self):
         path = [self.loop[0], self.loop[1], self.loop[0]]
         result = inspect(response([path]), path[0], path[-1], "river_out_and_back", path)
         self.assertEqual([], result["failures"])
-        self.assertIn("TURNPOINT_AND_DIRECTION_REVIEW_REQUIRED", result["unresolved"])
+        self.assertIn("RIVER_PROGRESS_AMBIGUOUS", result["unresolved"])
 
     def test_coordinate_order_nan_and_boolean_rejected(self):
         for value in ([37, 127], [float("nan"), 37], [True, 37]):

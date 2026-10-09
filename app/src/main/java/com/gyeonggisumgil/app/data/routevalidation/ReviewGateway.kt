@@ -1,6 +1,7 @@
 package com.gyeonggisumgil.app.data.routevalidation
 
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -8,11 +9,16 @@ import java.net.URL
 /** Temporary developer gateway; REST credentials and provider schema remain on the PC. */
 interface ReviewGateway {
     fun profiles(): JSONObject
+    fun riverCandidates(id: String, durationMinutes: Int, walkingSpeedKmh: Double): JSONObject
     fun route(id: String, mode: String): JSONObject
 }
 
 class LocalReviewGateway : ReviewGateway {
     override fun profiles() = request("/profiles", null)
+    override fun riverCandidates(id: String, durationMinutes: Int, walkingSpeedKmh: Double) =
+        request("/river-candidates", JSONObject().put("id", id)
+            .put("duration_minutes", durationMinutes).put("walking_speed_kmh", walkingSpeedKmh)
+            .put("distance_range_m", JSONArray(listOf(2000, 3000))))
     override fun route(id: String, mode: String) = request("/route",
         JSONObject().put("id", id).put("mode", mode))
 

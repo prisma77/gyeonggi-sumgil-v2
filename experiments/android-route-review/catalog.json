@@ -1,6 +1,10 @@
 [
+  {"id":"river-extended","label":"탄천 연결 보행로 · 2~3km 왕복 시험","site":"../kakao-walking/drafts/river-extended.probe.json","source_file":"../kakao-walking/sources/river-extended-walkways.osm.json"},
   {"id":"river","label":"탄천 짧은 구간 · 왕복 시험","site":"../kakao-walking/drafts/river.probe.json","source_file":"../kakao-walking/sources/river-walkways.osm.json"},
   {"id":"lake","label":"원천호수 · 기존 입력 · 미승인","site":"../kakao-walking/drafts/lake.probe.json","source_file":"../kakao-walking/sources/lake-walkways.osm.json"},
   {"id":"lake-comparison","label":"원천호수 · 4번 보행로 비교","site":"../kakao-walking/drafts/lake.alternative.probe.json","source_file":"../kakao-walking/sources/lake-walkways.osm.json"},
-  {"id":"lake-ground-cycle","label":"원천호수 · 외곽 순환 비교 · 출발점 변경","site":"../kakao-walking/drafts/lake.ground-cycle.probe.json","source_file":"../kakao-walking/sources/lake-walkways-bbox.osm.json"}
+  {"id":"lake-ground-cycle","label":"원천호수 · 외곽 순환 비교 · 출발점 변경","site":"../kakao-walking/drafts/lake.ground-cycle.probe.json","source_file":"../kakao-walking/sources/lake-walkways-bbox.osm.json"},
+  {"id":"river-long","label":"탄천 보행로 527m · 왕복 시험","site":"../kakao-walking/drafts/river-long.probe.json","source_file":"../kakao-walking/sources/river-walkways.osm.json"},
+  {"id":"sindae","label":"신대호수 · 순환 시험 · 미승인","site":"../kakao-walking/drafts/sindae.probe.json","source_file":"../kakao-walking/sources/sindae-walkways.osm.json"},
+  {"id":"sindae-north","label":"신대호수 · 5번 북쪽 비교 · 미승인","site":"../kakao-walking/drafts/sindae-north.probe.json","source_file":"../kakao-walking/sources/sindae-walkways.osm.json"}
 ]

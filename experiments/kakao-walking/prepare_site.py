@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from probe import inside, meters, point, source_ok
+from source_water import outer_boundary
 
 
 def eligible(tags):
@@ -81,10 +82,7 @@ def draft(source, selection):
     path = [coordinates[n] for n in nodes]
     water = []
     if shape == "lake_loop":
-        target = next(e for e in source["osm"]["elements"] if e["type"] == "way" and e["id"] == selection["water_way_id"])
-        if target.get("tags", {}).get("natural") != "water" or target["nodes"][0] != target["nodes"][-1]:
-            raise ValueError("Closed target water geometry required")
-        water = [point([p["lon"], p["lat"]]) for p in target["geometry"]]
+        water, water_reference = outer_boundary(source, selection.get("water_way_id"), selection.get("water_relation_id"))
         if not all(inside(p, path) for p in water):
             raise ValueError("Selected source sequence does not enclose target boundary")
     sampled = sample_nodes(nodes, coordinates)
@@ -102,7 +100,11 @@ def draft(source, selection):
                                       "SOURCE_NODE_SPACING_MAY_BE_UNEVEN"]},
               "selection_notes": selection.get("notes", [])}
     if water:
-        result["water_way_id"] = selection["water_way_id"]
+        key = "water_relation_id" if "water_relation_id" in selection else "water_way_id"
+        result[key] = selection[key]
+        result["water_boundary_reference"] = water_reference
+        if water_reference["inner_way_ids"]:
+            result["review"]["warnings"].append("WATER_INNER_AREAS_NOT_MODELED")
         result["review"]["warnings"].append("ENCLOSURE_CHECK_IS_NOT_FULL_TOPOLOGY_PROOF")
     return result
 

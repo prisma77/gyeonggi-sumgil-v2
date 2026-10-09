@@ -78,6 +78,20 @@ class SourceTopologyTests(unittest.TestCase):
         closed = next(c for c in matrix if c[0] == "same_point_via_5")
         self.assertEqual(points[-1], closed[3][-1])
 
+    def test_explicit_lake_indices_preserve_selected_original_source_points(self):
+        points = [(127 + n * 0.001, 37) for n in range(8)]
+        case = next(c for c in cases(points, "lake_loop", [1, 2, 4, 5, 7]) if c[0] == "same_point_via_5")
+        self.assertEqual([points[i] for i in [1, 2, 4, 5, 7]], case[3])
+        self.assertEqual(case[1], case[2])
+
+    def test_custom_waypoints_reject_duplicates_wrong_order_and_missing_river_turnpoint(self):
+        points = [(127 + n * 0.001, 37) for n in range(8)]
+        for indices in [[1, 2, 3, 4, 5, 6], [1, 2, 2, 4, 7], [2, 1, 3, 4, 7], [True, 2, 3, 4, 7], [0, 2, 3, 4, 7], [1, 2, 3, 4, 8]]:
+            with self.assertRaises(ValueError):
+                cases(points, "lake_loop", indices)
+        with self.assertRaises(ValueError):
+            cases(points, "river_out_and_back", [1, 2, 3, 4, 6])
+
     def test_real_source_draft_remains_blocked_before_review(self):
         path = Path(__file__).with_name("drafts") / "river.site.json"
         data = json.loads(path.read_text(encoding="utf-8"))

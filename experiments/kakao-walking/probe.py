@@ -253,8 +253,11 @@ def inspect(payload: dict, start: Point, end: Point, shape: str = "point_to_poin
                 if any(inside(p, water) for step in paths for a, b in zip(step, step[1:]) for p in samples(a, b)):
                     unknowns.append("WATER_CROSSING_REQUIRES_BRIDGE_CHECK")
         if shape == "river_out_and_back":
-            # Dedicated directional/turnpoint checks are needed before acceptance.
-            unknowns.append("TURNPOINT_AND_DIRECTION_REVIEW_REQUIRED")
+            from validate_river import inspect_river
+            river = inspect_river(paths, reference or [])
+            result["river_validation"] = river
+            failures.extend(river["failures"])
+            unknowns.extend(river["unresolved"])
         if shape == "lake_loop":
             unknowns.append("REPETITION_AND_TOPOLOGY_REVIEW_REQUIRED")
         result.update(distance_m=distance, time_s=duration, geometry_distance_m=round(geometric_distance, 1),
@@ -322,16 +325,49 @@ def load_site(path: Path) -> dict:
     site["water_boundary"] = [point(p) for p in site.get("water_boundary", [])]
     if site["shape"] == "lake_loop" and (not source_ok(site.get("water_source")) or len(site["water_boundary"]) < 3):
         raise ValueError("A sourced lake boundary is required")
+    cases(site["walk_points"], site["shape"], site.get("via_sample_indices"))
     return site
 
 
-def cases(points: list[Point], shape: str) -> list[tuple]:
+def routing_inputs(site):
+    """One reviewed request; generated river candidates may need fewer than five vias."""
+    points = [point(p) for p in site["walk_points"]]
+    if "river_candidate" in site:
+        indices = site.get("selected_via_indices")
+        if (site["shape"] != "river_out_and_back" or not 2 <= len(points) <= 200 or
+                not isinstance(indices, list) or not 1 <= len(indices) <= 5 or
+                any(type(i) is not int or not 0 < i < len(points) for i in indices)):
+            raise ValueError("Ordered original river via nodes including final turnpoint required")
+        if site.get("via_sequence_policy") == "MIRRORED_SOURCE_OUT_AND_BACK":
+            middle = len(indices) // 2
+            outbound = indices[:middle + 1]
+            if (len(indices) % 2 != 1 or outbound != sorted(set(outbound)) or
+                    outbound[-1] != len(points) - 1 or indices[middle + 1:] != list(reversed(outbound[:-1])) or
+                    site["river_candidate"].get("turnpoint_via_index") != middle):
+                raise ValueError("One real turnpoint with matching outbound and return anchors required")
+        elif sorted(set(indices)) != indices or indices[-1] != len(points) - 1:
+            raise ValueError("Ordered outbound source nodes required")
+        return points[0], points[0], [points[i] for i in indices], site["shape"]
+    _, start, end, via, shape = next(c for c in cases(points, site["shape"], site.get("via_sample_indices"))
+                                   if c[0] == "same_point_via_5")
+    return start, end, via, shape
+
+
+def cases(points: list[Point], shape: str, via_sample_indices=None) -> list[tuple]:
+    if via_sample_indices is not None:
+        if (not isinstance(via_sample_indices, list) or len(via_sample_indices) != 5 or
+                any(type(i) is not int or not 0 < i < len(points) for i in via_sample_indices) or
+                sorted(set(via_sample_indices)) != via_sample_indices or
+                shape == "river_out_and_back" and via_sample_indices[-1] != len(points) - 1):
+            raise ValueError("Five ordered distinct source sample indices required; river must include turnpoint")
     a = points[0]
     result = [("baseline", a, points[1], [], "point_to_point")]
     for n in (1, 3, 5, 6):
         result.append((f"via_{n}", a, points[n + 1], points[1:n + 1], "point_to_point"))
     result.append(("same_point_no_via", a, a, [], "point_to_point"))
-    if shape == "lake_loop":
+    if via_sample_indices is not None:
+        loop_via = [points[i] for i in via_sample_indices]
+    elif shape == "lake_loop":
         loop_via = [points[i * len(points) // 6] for i in range(1, 6)]
     else:
         # Include the actual sourced turnpoint, not an arbitrary earlier point.
@@ -380,7 +416,7 @@ def main() -> int:
         raise ValueError("Invalid call budget or corridor tolerance")
     site = load_site(args.site)
     client = Client(key, args.max_calls)
-    matrix = cases(site["walk_points"], site["shape"])
+    matrix = cases(site["walk_points"], site["shape"], site.get("via_sample_indices"))
     if args.case:
         matrix = [case for case in matrix if case[0] == args.case]
         if not matrix:

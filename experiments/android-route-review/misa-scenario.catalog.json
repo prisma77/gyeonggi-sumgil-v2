@@ -1,0 +1,8 @@
+[
+  {
+    "id": "misa",
+    "label": "미사호수공원 · 요청 3km · 호수 순환 후보 시험",
+    "site": "../kakao-walking/drafts/misa.probe.json",
+    "source_file": "../kakao-walking/sources/misa-walkways.osm.json"
+  }
+]
